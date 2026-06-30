@@ -74,8 +74,11 @@ workflow:
       - target/
 
 .linux: &linux
+  # gitlab.com shared runners expose tags like `docker` (Linux) / `windows`
+  # / `macos` (Ultimate). We tag Linux jobs with `docker` so the shared
+  # Linux runner pool picks them up.
   tags:
-    - linux
+    - docker
   image:
     name: "rust:1"
     entrypoint: [""]
