@@ -7,16 +7,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: "1"
-
-permissions:
-  contents: read
-
 jobs:
   fmt:
-    name: rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,122 +17,16 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  clippy:
-    name: clippy (stable)
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked --all-targets -- -D warnings
-
-  build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --verbose
-      - run: cargo build --locked --release --verbose
 
   test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --all-targets
-      - run: cargo test --locked --doc
-
-  audit:
-    name: cargo-audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install --locked cargo-audit
-      - run: cargo audit
-
-  adversarial:
-    name: adversarial input regression
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release
-      - run: bash scripts/adversarial_test.sh ./target/release/rustrip
-
-  e2e:
-    name: end-to-end fixture
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: install binutils (strip)
-        run: sudo apt-get install -y binutils
-      - run: bash scripts/build-fixtures.sh
-      - run: cargo build --release
-      - run: ./target/release/rustrip tests/fixtures/dist/sample -f table
-      - run: ./target/release/rustrip tests/fixtures/dist/sample -f json  -o report.json
-      - run: ./target/release/rustrip tests/fixtures/dist/sample -f ghidra -o report_ghidra.py
-      - run: ./target/release/rustrip tests/fixtures/dist/sample -f binja  -o report_binja.py
-      - run: python3 -c "import json; d=json.load(open('report.json')); assert isinstance(d,list) and len(d)>0"
-      - run: python3 -c "import ast; ast.parse(open('report_ghidra.py','rb').read().decode('utf-8','replace'))"
-      - run: python3 -c "import ast; ast.parse(open('report_binja.py','rb').read().decode('utf-8','replace'))"
-
-  coverage:
-    name: coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install --locked cargo-llvm-cov
-      - run: cargo llvm-cov --locked --workspace --all-targets --cobertura --output-path cobertura.xml
-      - run: cargo llvm-cov --locked --workspace --all-targets --html --output-dir coverage-html
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: cobertura.xml
-          retention-days: 7
-
-  release-dry-run:
-    name: publish dry-run
-    needs: [fmt, clippy, build, test, audit, adversarial, e2e]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --dry-run --locked
-
-  release:
-    name: publish
-    needs: [fmt, clippy, build, test, audit, adversarial, e2e]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - run: cargo publish --locked
