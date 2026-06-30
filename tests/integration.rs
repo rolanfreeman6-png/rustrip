@@ -45,7 +45,6 @@ fn strings_analyzer_recovers_or_is_safe_on_no_strings() {
         assert!(!a.label.is_empty(), "empty label at vaddr {:#x}", a.vaddr);
     }
 }
-}
 
 #[test]
 fn symbols_analyzer_demangles_self_without_panic() {
