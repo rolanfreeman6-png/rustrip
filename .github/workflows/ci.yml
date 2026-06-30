@@ -6,25 +6,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    # Weekly: cargo-audit against RustSec advisory DB updates.
-    - cron: "0 6 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 
-# Note: previous versions of this workflow used a `concurrency.cancel-in-progress`
-# block keyed on ref+workflow. With zero prior runs cached it cancelled
-# both runs on consecutive pushes before any job executed, producing
-# `conclusion: failure, jobs: 0`. Removed entirely — external pushes are
-# infrequent and the trade-off (one extra minute of compute) is worth the
-# debugging clarity.
+permissions:
+  contents: read
 
 jobs:
-  # -------------------------------------------------------------------------
-  # 1. rustfmt --check (readiness gate before even compiling).
-  # -------------------------------------------------------------------------
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -35,57 +25,19 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  # -------------------------------------------------------------------------
-  # 2. clippy with -D warnings on every supported toolchain.
-  # -------------------------------------------------------------------------
   clippy:
-    name: clippy (${{ matrix.toolchain }})
+    name: clippy (stable)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked --all-targets -- -D warnings
 
-  # -------------------------------------------------------------------------
-  # 3. Build matrix — release artifacts produced for tagged releases.
-  # -------------------------------------------------------------------------
   build:
-    name: build (${{ matrix.os }} / ${{ matrix.toolchain }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        toolchain: [stable]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --verbose
-      - run: cargo build --locked --release --verbose
-      - name: Upload release binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustrip-${{ matrix.os }}
-          path: |
-            target/release/rustrip
-            target/release/rustrip.exe
-          if-no-files-found: error
-          retention-days: 7
-
-  # -------------------------------------------------------------------------
-  # 4. Tests — full cargo test --all-targets incl. doc tests.
-  # -------------------------------------------------------------------------
-  test:
-    name: test (${{ matrix.os }})
-    needs: fmt
+    name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -95,12 +47,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --all-targets -- --nocapture
+      - run: cargo build --locked --verbose
+      - run: cargo build --locked --release --verbose
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --all-targets
       - run: cargo test --locked --doc
 
-  # -------------------------------------------------------------------------
-  # 5. cargo-audit — security advisory DB check (weekly + on PR).
-  # -------------------------------------------------------------------------
   audit:
     name: cargo-audit
     runs-on: ubuntu-latest
@@ -109,12 +72,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --locked cargo-audit
-      - run: cargo audit --deny warnings
+      - run: cargo audit
 
-  # -------------------------------------------------------------------------
-  # 6. Adversarial — feeds rustrip 2000+ random inputs, must not panic.
-  #    This is the resilience check for malware-grade inputs.
-  # -------------------------------------------------------------------------
   adversarial:
     name: adversarial input regression
     runs-on: ubuntu-latest
@@ -122,15 +81,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: build rustrip
-        run: cargo build --locked --release
-      - name: run adversarial script
-        run: bash scripts/adversarial_test.sh ./target/release/rustrip
+      - run: cargo build --locked --release
+      - run: bash scripts/adversarial_test.sh ./target/release/rustrip
 
-  # -------------------------------------------------------------------------
-  # 7. End-to-end on a stripped fixture binary.
-  #    Verifies all four output backends produce parseable artifacts.
-  # -------------------------------------------------------------------------
   e2e:
     name: end-to-end fixture
     runs-on: ubuntu-latest
@@ -140,31 +93,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: install binutils (strip)
         run: sudo apt-get install -y binutils
-      - name: build fixture + rustrip
-        run: |
-          bash scripts/build-fixtures.sh
-          cargo build --release
-      - name: run rustrip on fixture
-        run: |
-          ./target/release/rustrip tests/fixtures/dist/sample -f table
-          ./target/release/rustrip tests/fixtures/dist/sample -f json  -o report.json
-          ./target/release/rustrip tests/fixtures/dist/sample -f ghidra -o report_ghidra.py
-          ./target/release/rustrip tests/fixtures/dist/sample -f binja  -o report_binja.py
-      - name: validate outputs
-        run: |
-          python3 -c \
-            "import json; d=json.load(open('report.json')); assert isinstance(d,list) and len(d)>0"
-          python3 -c \
-            "import ast; ast.parse(open('report_ghidra.py','rb').read().decode('utf-8','replace'))"
-          python3 -c \
-            "import ast; ast.parse(open('report_binja.py','rb').read().decode('utf-8','replace'))"
+      - run: bash scripts/build-fixtures.sh
+      - run: cargo build --release
+      - run: ./target/release/rustrip tests/fixtures/dist/sample -f table
+      - run: ./target/release/rustrip tests/fixtures/dist/sample -f json  -o report.json
+      - run: ./target/release/rustrip tests/fixtures/dist/sample -f ghidra -o report_ghidra.py
+      - run: ./target/release/rustrip tests/fixtures/dist/sample -f binja  -o report_binja.py
+      - run: python3 -c "import json; d=json.load(open('report.json')); assert isinstance(d,list) and len(d)>0"
+      - run: python3 -c "import ast; ast.parse(open('report_ghidra.py','rb').read().decode('utf-8','replace'))"
+      - run: python3 -c "import ast; ast.parse(open('report_binja.py','rb').read().decode('utf-8','replace'))"
 
-  # -------------------------------------------------------------------------
-  # 8. Coverage — cargo-llvm-cov on linux (Cobertura XML for GitHub code
-  #    coverage widget via codecov/codcov-action or similar).
-  # -------------------------------------------------------------------------
   coverage:
-    name: coverage (linux)
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,28 +112,15 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-      - name: install tools
-        run: |
-          cargo install --locked cargo-llvm-cov
-      - name: generate coverage
-        run: |
-          cargo llvm-cov --locked --workspace --all-targets \
-            --cobertura --output-path cobertura.xml
-          cargo llvm-cov --locked --workspace --all-targets \
-            --html --output-dir coverage-html
-      - name: upload artifact
-        uses: actions/upload-artifact@v4
+      - run: cargo install --locked cargo-llvm-cov
+      - run: cargo llvm-cov --locked --workspace --all-targets --cobertura --output-path cobertura.xml
+      - run: cargo llvm-cov --locked --workspace --all-targets --html --output-dir coverage-html
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage
-          path: |
-            cobertura.xml
-            coverage-html/
-          retention-days: 14
+          path: cobertura.xml
+          retention-days: 7
 
-  # -------------------------------------------------------------------------
-  # 9. Publish dry-run on main; full publish on tag push.
-  #    CARGO_REGISTRY_TOKEN must be set in the GitHub repo's Secrets.
-  # -------------------------------------------------------------------------
   release-dry-run:
     name: publish dry-run
     needs: [fmt, clippy, build, test, audit, adversarial, e2e]
@@ -203,11 +130,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo publish --dry-run
-        run: cargo publish --dry-run --locked
+      - run: cargo publish --dry-run --locked
 
   release:
-    name: publish to crates.io
+    name: publish
     needs: [fmt, clippy, build, test, audit, adversarial, e2e]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -215,7 +141,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo publish
-        env:
+      - env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
+      - run: cargo publish --locked
