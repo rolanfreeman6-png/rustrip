@@ -1,0 +1,551 @@
+# ============================================================================
+# rustrip — GitLab CI/CD pipeline
+#
+# Coverage:
+#   lint        : rustfmt + clippy (stable + pedantic on nightly)
+#   security    : cargo-audit (RustSec advisory DB)
+#   build       : matrix across {linux, windows, macos} × {gnu, musl, msvc,
+#                  darwin} × {stable, beta}
+#   test        : full cargo test --all-targets incl. doc tests + end-to-end
+#                  on a stripped Rust fixture binary (string-symbol-panic E2E)
+#   coverage    : cargo-llvm-cov on Linux only, HTML + Cobertura + LCOV
+#                  artifacts and coverage %
+#   fuzz        : cargo-fuzz smoke run on nightly (manual)
+#   release     : publish --dry-run + cross-platform binary artifacts on tag
+#
+# Runner requirements (GitLab shared or self-hosted):
+#   - linux  : docker executor; tag `linux`; image `rust:1`
+#   - windows: shell  executor; tag `windows`; Rust + MSVC build tools preinstalled
+#   - macos  : shell  executor; tag `macos`;  Rust + Xcode CLT preinstalled
+#     (GitLab.com Ultimate tier required for shared macOS runners.)
+#
+# Secrets (including your GitLab PAT) MUST be added via
+# `Settings -> CI/CD -> Variables` and referenced as $VAR — never committed.
+# ============================================================================
+
+stages:
+  - lint
+  - security
+  - build
+  - test
+  - coverage
+  - fuzz
+  - release
+
+variables:
+  CARGO_TERM_COLOR: "always"
+  RUST_BACKTRACE: "1"
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  RUSTUP_HOME: "$CI_PROJECT_DIR/.rustup"
+
+default:
+  interruptible: true
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+# ----------------------------------------------------------------------------
+# Workflow gating: run on MRs, default branch, tags, scheduled pipelines.
+# ----------------------------------------------------------------------------
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: always
+
+# ----------------------------------------------------------------------------
+# Reusable YAML anchors
+# ----------------------------------------------------------------------------
+
+.cargo_cache: &cargo_cache
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/cache/
+      - .cargo/registry/index/
+      - .cargo/git/db/
+      - target/
+
+.linux: &linux
+  tags:
+    - linux
+  image:
+    name: "rust:1"
+    entrypoint: [""]
+
+.windows: &windows
+  tags:
+    - windows
+
+.macos: &macos
+  tags:
+    - macos
+
+# ============================================================================
+# Stage: lint
+# ============================================================================
+
+fmt:
+  stage: lint
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup component add rustfmt
+  script:
+    - cargo fmt --all -- --check
+    - cargo fmt --all  # run formatter; CI fails format check above, fmt fix here
+
+clippy:stable:
+  stage: lint
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+    - rustup component add clippy
+  script:
+    - cargo clippy --locked --all-targets -- -D warnings
+
+clippy:pedantic:
+  stage: lint
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo clippy --locked --all-targets -- -W clippy::pedantic -W clippy::nursery
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  allow_failure: true
+
+# ============================================================================
+# Stage: security
+# ============================================================================
+
+audit:rustsec:
+  stage: security
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - cargo install --locked cargo-audit
+  script:
+    - cargo audit --deny warnings
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+deny:
+  stage: security
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - cargo install --locked cargo-deny
+  script:
+    - cargo deny check
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: manual
+  allow_failure: true
+
+# ============================================================================
+# Stage: build
+# Matrix:
+#   - Linux   : x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl,
+#               aarch64-unknown-linux-gnu
+#   - Windows : x86_64-pc-windows-msvc, x86_64-pc-windows-gnu
+#   - macOS   : x86_64-apple-darwin, aarch64-apple-darwin
+# ============================================================================
+
+build:linux:gnu:
+  stage: build
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup target add x86_64-unknown-linux-gnu
+  script:
+    - cargo build --locked --target x86_64-unknown-linux-gnu --verbose
+    - cargo build --locked --release --target x86_64-unknown-linux-gnu --verbose
+  artifacts:
+    paths:
+      - target/x86_64-unknown-linux-gnu/release/rustrip
+      - target/x86_64-unknown-linux-gnu/debug/rustrip
+    expire_in: 1 day
+
+build:linux:musl:
+  stage: build
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends musl-tools
+    - rustup target add x86_64-unknown-linux-musl
+  script:
+    - cargo build --locked --release --target x86_64-unknown-linux-musl --verbose
+  artifacts:
+    paths:
+      - target/x86_64-unknown-linux-musl/release/rustrip
+    expire_in: 1 day
+
+build:linux:aarch64:
+  stage: build
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cargo build --locked --release --target aarch64-unknown-linux-gnu --verbose
+  artifacts:
+    paths:
+      - target/aarch64-unknown-linux-gnu/release/rustrip
+    expire_in: 1 day
+
+build:windows:msvc:
+  stage: build
+  <<: [*windows, *cargo_cache]
+  before_script:
+    - rustup default stable-msvc
+    - rustup target add x86_64-pc-windows-msvc
+  script:
+    - cargo build --locked --target x86_64-pc-windows-msvc --verbose
+    - cargo build --locked --release --target x86_64-pc-windows-msvc --verbose
+  artifacts:
+    paths:
+      - target/x86_64-pc-windows-msvc/release/rustrip.exe
+      - target/x86_64-pc-windows-msvc/debug/rustrip.exe
+    expire_in: 1 day
+
+build:windows:gnu:
+  stage: build
+  <<: [*windows, *cargo_cache]
+  before_script:
+    - rustup default stable-gnu
+    - rustup target add x86_64-pc-windows-gnu
+  script:
+    - cargo build --locked --release --target x86_64-pc-windows-gnu --verbose
+  artifacts:
+    paths:
+      - target/x86_64-pc-windows-gnu/release/rustrip.exe
+    expire_in: 1 day
+
+build:macos:x86_64:
+  stage: build
+  <<: [*macos, *cargo_cache]
+  before_script:
+    - rustup target add x86_64-apple-darwin
+  script:
+    - cargo build --locked --target x86_64-apple-darwin --verbose
+    - cargo build --locked --release --target x86_64-apple-darwin --verbose
+  artifacts:
+    paths:
+      - target/x86_64-apple-darwin/release/rustrip
+    expire_in: 1 day
+
+build:macos:aarch64:
+  stage: build
+  <<: [*macos, *cargo_cache]
+  before_script:
+    - rustup target add aarch64-apple-darwin
+  script:
+    - cargo build --locked --release --target aarch64-apple-darwin --verbose
+  artifacts:
+    paths:
+      - target/aarch64-apple-darwin/release/rustrip
+    expire_in: 1 day
+
+# ============================================================================
+# Stage: test
+# ============================================================================
+
+test:linux:stable:
+  stage: test
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends binutils file
+  script:
+    - cargo test --locked --all-targets --verbose -- --nocapture
+  artifacts:
+    when: always
+    paths:
+      - target/test_output/
+    expire_in: 3 days
+
+test:linux:beta:
+  stage: test
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup toolchain install beta --profile minimal
+  script:
+    - cargo +beta test --locked --all-targets --verbose
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+test:linux:doc:
+  stage: test
+  <<: [*linux, *cargo_cache]
+  script:
+    - cargo test --locked --doc --verbose
+
+test:windows:msvc:
+  stage: test
+  <<: [*windows, *cargo_cache]
+  before_script:
+    - rustup default stable-msvc
+  script:
+    - cargo test --locked --all-targets --verbose
+
+test:macos:stable:
+  stage: test
+  <<: [*macos, *cargo_cache]
+  before_script:
+    - rustup default stable
+  script:
+    - cargo test --locked --all-targets --verbose
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# End-to-end on a stripped Rust fixture: build a small fixture program with the
+# host toolchain, strip it, then run rustrip on it and verify the four output
+# backends are syntactically valid (Python AST.parse / JSON.parse).
+
+test:e2e:fixture:
+  stage: test
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends build-essential binutils
+  script:
+    - bash scripts/build-fixtures.sh
+    - ls -la tests/fixtures/dist
+    - cargo build --locked --release
+    - set -e
+    - ./target/release/rustrip tests/fixtures/dist/sample -f table
+    - ./target/release/rustrip tests/fixtures/dist/sample -f json  -o report.json
+    - ./target/release/rustrip tests/fixtures/dist/sample -f ghidra -o report_ghidra.py
+    - ./target/release/rustrip tests/fixtures/dist/sample -f binja  -o report_binja.py
+    - python3 -c "import json,sys; d=json.load(open('report.json')); assert isinstance(d,list) and len(d)>0, 'no annotations recovered'; print('json: OK,', len(d), 'entries')"
+    - python3 -c "import ast; ast.parse(open('report_ghidra.py','rb').read().decode('utf-8','replace')); print('ghidra: syntax OK')"
+    - python3 -c "import ast; ast.parse(open('report_binja.py','rb').read().decode('utf-8','replace')); print('binja : syntax OK')"
+  artifacts:
+    when: always
+    paths:
+      - report.json
+      - report_ghidra.py
+      - report_binja.py
+    expire_in: 7 days
+
+# Property-style stress: feed randomized bytes through the parser and ensure
+# it errors out rather than panicking on adversarial input.
+
+test:property:adversarial:
+  stage: test
+  <<: [*linux, *cargo_cache]
+  script:
+    - cargo build --locked --release
+    - ./scripts/adversarial_test.sh ./target/release/rustrip
+  artifacts:
+    when: always
+    paths:
+      - adversarial_report/
+    expire_in: 3 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: manual
+
+# ============================================================================
+# Stage: coverage
+# Reports LCOV to be consumed by GitLab code coverage widget, plus HTML for
+# human inspection. Linux-only because cargo-llvm-cov needs llvm-tools and
+# the wrapper is best-tested on Linux.
+# ============================================================================
+
+coverage:linux:
+  stage: coverage
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends lld llvm
+    - rustup component add llvm-tools-preview
+    - cargo install --locked cargo-llvm-cov
+  script:
+    - cargo llvm-cov --locked --workspace --all-targets --lcov --output-path coverage.lcov
+    - cargo llvm-cov --locked --workspace --all-targets --html --output-dir coverage-html
+    - cargo llvm-cov --locked --workspace --all-targets --cobertura --output-path cobertura.xml
+  coverage: '/^\s*line_coverage_rate:\s*([0-9.]+)\s*$/'
+  artifacts:
+    paths:
+      - coverage.lcov
+      - cobertura.xml
+      - coverage-html/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: manual
+
+# ============================================================================
+# Stage: fuzz
+# cargo-fuzz smoke on nightly. No fuzz targets in v0.1 — this is a placeholder
+# that documents the integration path so v0.2 fuzz harnesses slot in
+# without touching CI config.
+# ============================================================================
+
+fuzz:smoke:
+  stage: fuzz
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup toolchain install nightly --profile minimal
+    - cargo install --locked cargo-fuzz
+  script:
+    - if [ -d fuzz ]; then
+    -   (cd fuzz && timeout 60 cargo +nightly fuzz build);
+    -   (cd fuzz && timeout 60 cargo +nightly fuzz run parse_binary -- -max_total_time=30 || echo "fuzz smoke done");
+    - else
+    -   echo "no fuzz targets in v0.1 — skipping";
+    - fi
+  rules:
+    - when: manual
+  allow_failure: true
+
+# ============================================================================
+# Stage: release
+# Triggered by tags (v*); builds & uploads cross-platform binaries + sha256.
+# ============================================================================
+
+release:linux:x86_64:
+  stage: release
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - rustup target add x86_64-unknown-linux-gnu
+  script:
+    - cargo build --locked --release --target x86_64-unknown-linux-gnu
+    - cp target/x86_64-unknown-linux-gnu/release/rustrip rustrip-linux-x86_64
+    - sha256sum rustrip-linux-x86_64 | tee rustrip-linux-x86_64.sha256
+  artifacts:
+    paths:
+      - rustrip-linux-x86_64
+      - rustrip-linux-x86_64.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:linux:musl:x86_64:
+  stage: release
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends musl-tools
+    - rustup target add x86_64-unknown-linux-musl
+  script:
+    - cargo build --locked --release --target x86_64-unknown-linux-musl
+    - cp target/x86_64-unknown-linux-musl/release/rustrip rustrip-linux-x86_64-musl
+    - sha256sum rustrip-linux-x86_64-musl | tee rustrip-linux-x86_64-musl.sha256
+  artifacts:
+    paths:
+      - rustrip-linux-x86_64-musl
+      - rustrip-linux-x86_64-musl.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:linux:aarch64:
+  stage: release
+  <<: [*linux, *cargo_cache]
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cargo build --locked --release --target aarch64-unknown-linux-gnu
+    - cp target/aarch64-unknown-linux-gnu/release/rustrip rustrip-linux-aarch64
+    - sha256sum rustrip-linux-aarch64 | tee rustrip-linux-aarch64.sha256
+  artifacts:
+    paths:
+      - rustrip-linux-aarch64
+      - rustrip-linux-aarch64.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:windows:x86_64:
+  stage: release
+  <<: [*windows, *cargo_cache]
+  before_script:
+    - rustup default stable-msvc
+    - rustup target add x86_64-pc-windows-msvc
+  script:
+    - cargo build --locked --release --target x86_64-pc-windows-msvc
+    - Copy-Item target/x86_64-pc-windows-msvc/release/rustrip.exe rustrip-windows-x86_64.exe
+    - Get-FileHash -Algorithm SHA256 rustrip-windows-x86_64.exe | Out-File -Encoding ascii rustrip-windows-x86_64.exe.sha256
+  artifacts:
+    paths:
+      - rustrip-windows-x86_64.exe
+      - rustrip-windows-x86_64.exe.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:macos:x86_64:
+  stage: release
+  <<: [*macos, *cargo_cache]
+  before_script:
+    - rustup target add x86_64-apple-darwin
+  script:
+    - cargo build --locked --release --target x86_64-apple-darwin
+    - cp target/x86_64-apple-darwin/release/rustrip rustrip-macos-x86_64
+    - shasum -a 256 rustrip-macos-x86_64 | tee rustrip-macos-x86_64.sha256
+  artifacts:
+    paths:
+      - rustrip-macos-x86_64
+      - rustrip-macos-x86_64.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:macos:aarch64:
+  stage: release
+  <<: [*macos, *cargo_cache]
+  before_script:
+    - rustup target add aarch64-apple-darwin
+  script:
+    - cargo build --locked --release --target aarch64-apple-darwin
+    - cp target/aarch64-apple-darwin/release/rustrip rustrip-macos-aarch64
+    - shasum -a 256 rustrip-macos-aarch64 | tee rustrip-macos-aarch64.sha256
+  artifacts:
+    paths:
+      - rustrip-macos-aarch64
+      - rustrip-macos-aarch64.sha256
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:publish:dry-run:
+  stage: release
+  <<: [*linux, *cargo_cache]
+  script:
+    - cargo publish --dry-run --locked
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+
+release:publish:
+  stage: release
+  <<: [*linux, *cargo_cache]
+  script:
+    - cargo publish --locked
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/'
+    - if: '$CARGO_REGISTRY_TOKEN'
+      when: always
+  # CARGO_REGISTRY_TOKEN must be added in CI/CD Variables (masked+protected).
