@@ -135,7 +135,7 @@ impl Binary {
             if vaddr >= sec.vaddr
                 && vaddr
                     .checked_add(len)
-                    .map_or(false, |e| e <= sec.vaddr + sec.size)
+                    .is_some_and(|e| e <= sec.vaddr + sec.size)
             {
                 return true;
             }
@@ -339,8 +339,7 @@ impl Binary {
             let end = sec.vaddr.wrapping_add(sec.size);
             self.sec_by_vaddr.push((sec.vaddr, end, i));
         }
-        self.sec_by_vaddr
-            .sort_by_key(|(start, _end, _i)| *start);
+        self.sec_by_vaddr.sort_by_key(|(start, _end, _i)| *start);
 
         for (i, sec) in self.sections.iter().enumerate() {
             if is_string_section_name(&sec.name) {

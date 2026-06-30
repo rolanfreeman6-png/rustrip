@@ -27,7 +27,9 @@ pub struct PanicsAnalyzer {
 
 impl PanicsAnalyzer {
     pub fn new() -> Self {
-        Self { limits: Limits::default() }
+        Self {
+            limits: Limits::default(),
+        }
     }
 
     pub fn with_limits(limits: Limits) -> Self {
@@ -86,7 +88,7 @@ fn scan_locations<const WS: usize>(bin: &Binary, limits: &Limits, out: &mut Vec<
                     continue;
                 }
             };
-            if file_len < 1 || file_len > 4096 {
+            if !(1..=4096).contains(&file_len) {
                 off += WS;
                 continue;
             }
@@ -155,13 +157,13 @@ fn is_panic_container(name: &str, size: u64) -> bool {
     if size < 16 {
         return false;
     }
-    let is_named_ro = name == ".rodata"
+
+    name == ".rodata"
         || name.starts_with(".rodata.")
         || name == ".rdata"
         || name.starts_with(".rdata.")
         || name == ".data.rel.ro"
-        || name.starts_with(".data.rel.ro.");
-    is_named_ro
+        || name.starts_with(".data.rel.ro.")
 }
 
 #[cfg(test)]

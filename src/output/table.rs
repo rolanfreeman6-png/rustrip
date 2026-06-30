@@ -15,8 +15,20 @@ impl OutputBackend for Table {
         let label_w = label_width(anns);
 
         // Header
-        writeln!(w, "{:<18}  {:<kind_w$}  {}", "vaddr", "kind", "label", kind_w = kind_w)?;
-        writeln!(w, "{}  {}  {}", repeat('-', 18), repeat('-', kind_w), repeat('-', label_w))?;
+        writeln!(
+            w,
+            "{:<18}  {:<kind_w$}  label",
+            "vaddr",
+            "kind",
+            kind_w = kind_w
+        )?;
+        writeln!(
+            w,
+            "{}  {}  {}",
+            repeat('-', 18),
+            repeat('-', kind_w),
+            repeat('-', label_w)
+        )?;
 
         for a in anns {
             writeln!(
@@ -29,7 +41,7 @@ impl OutputBackend for Table {
             )?;
             if let Some(c) = &a.comment {
                 for line in textwrap(c, label_w) {
-                    writeln!(w, "{}  {:<kind_w$}  │ {}", "", "", line, kind_w = kind_w)?;
+                    writeln!(w, "  {:<kind_w$}  │ {}", "", line, kind_w = kind_w)?;
                 }
             }
         }
@@ -64,7 +76,10 @@ fn label_width(anns: &[Annotation]) -> usize {
 }
 
 fn one_line(s: &str, max: usize) -> String {
-    let one = s.replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+    let one = s
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
     if one.chars().count() <= max {
         one
     } else {
@@ -102,7 +117,7 @@ fn textwrap(s: &str, width: usize) -> Vec<String> {
 }
 
 fn repeat(c: char, n: usize) -> String {
-    std::iter::repeat(c).take(n).collect()
+    std::iter::repeat_n(c, n).collect()
 }
 
 #[cfg(test)]

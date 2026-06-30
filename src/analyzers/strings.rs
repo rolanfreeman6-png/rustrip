@@ -37,7 +37,9 @@ pub struct StringsAnalyzer {
 
 impl StringsAnalyzer {
     pub fn new() -> Self {
-        Self { limits: Limits::default() }
+        Self {
+            limits: Limits::default(),
+        }
     }
 
     pub fn with_limits(limits: Limits) -> Self {
@@ -73,14 +75,14 @@ impl Analyzer for StringsAnalyzer {
 
 fn scan_section(bin: &Binary, sec: &Section, ws: usize, max: usize, out: &mut Vec<Annotation>) {
     let data = sec.data.as_slice();
-    if data.len() < ws.checked_mul(2).unwrap_or(usize::MAX) {
+    if data.len() < ws.saturating_mul(2) {
         return;
     }
     // Step by `ws` bytes: many slice-headers can sit at offset 0, 8, 16...
     // but random table rows interleaved with relocations are also plausible.
     // We rely on the validity checks to reject near-misses.
     let mut off = 0usize;
-    while off.checked_add(ws * 2).map_or(false, |e| e <= data.len()) {
+    while off.checked_add(ws * 2).is_some_and(|e| e <= data.len()) {
         let lookup = sec.vaddr.checked_add(off as u64).unwrap();
         let ptr = match bin.read_ptr(lookup) {
             Some(p) => p,

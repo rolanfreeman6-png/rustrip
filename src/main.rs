@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use rustrip::analyzers::{
     panics::PanicsAnalyzer, strings::StringsAnalyzer, symbols::SymbolsAnalyzer, Registry,
 };
-use rustrip::output::{binja::Binja, ghidra::Ghidra, json::Json, table::Table, Format, OutputBackend};
+use rustrip::output::{
+    binja::Binja, ghidra::Ghidra, json::Json, table::Table, Format, OutputBackend,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -56,13 +58,14 @@ fn main() -> Result<()> {
 
     let bytes = read_bytes(&cli.path)?;
 
-    let bin = rustrip::binary::Binary::parse(cli.path.to_str(), bytes)
-        .context("loading binary")?;
+    let bin = rustrip::binary::Binary::parse(cli.path.to_str(), bytes).context("loading binary")?;
 
     let mut registry = Registry::new();
     if !cli.no_strings {
-        let mut lim = rustrip::analyzers::Limits::default();
-        lim.max_string_len = cli.max_string_len;
+        let lim = rustrip::analyzers::Limits {
+            max_string_len: cli.max_string_len,
+            ..rustrip::analyzers::Limits::default()
+        };
         registry = registry.with(Box::new(StringsAnalyzer::with_limits(lim)));
     }
     if !cli.no_symbols {
@@ -73,8 +76,8 @@ fn main() -> Result<()> {
     }
     let anns = registry.run(&bin);
 
-    let fmt = Format::from_str(&cli.format)
-        .with_context(|| format!("unknown --format '{}'", cli.format))?;
+    let fmt =
+        Format::parse(&cli.format).with_context(|| format!("unknown --format '{}'", cli.format))?;
 
     let backend: Box<dyn OutputBackend> = match fmt {
         Format::Table => Box::new(Table),
@@ -84,8 +87,9 @@ fn main() -> Result<()> {
     };
 
     let mut sink: Box<dyn Write> = match cli.output.as_ref() {
-        Some(p) => Box::new(std::fs::File::create(p)
-            .with_context(|| format!("creating {}", p.display()))?),
+        Some(p) => {
+            Box::new(std::fs::File::create(p).with_context(|| format!("creating {}", p.display()))?)
+        }
         None => Box::new(std::io::stdout().lock()),
     };
 
@@ -98,8 +102,8 @@ fn read_bytes(path: &PathBuf) -> Result<Vec<u8>> {
     if path.to_str() == Some("-") {
         std::io::stdin().read_to_end(&mut buf)?;
     } else {
-        let mut f = std::fs::File::open(path)
-            .with_context(|| format!("opening {}", path.display()))?;
+        let mut f =
+            std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
         f.read_to_end(&mut buf)?;
 
         // If the path looks like a Windows shortcut to an underlying binary

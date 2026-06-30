@@ -62,7 +62,9 @@ impl OutputBackend for Ghidra {
                 writeln!(
                     w,
                     "    (0x{:x}, \"{}_{{}}\".format({}), \"\"),",
-                    a.vaddr, prefix, py_str(&a.label)
+                    a.vaddr,
+                    prefix,
+                    py_str(&a.label)
                 )?;
             }
         }
@@ -72,23 +74,20 @@ impl OutputBackend for Ghidra {
         writeln!(w, "_applied_l = 0")?;
         writeln!(w, "for vaddr, text in _comments:")?;
         // Python format-spec `0x{vaddr:x}` — emit literal by doubling braces.
-        writeln!(
-            w,
-            "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))"
-        )?;
+        writeln!(w, "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))")?;
         writeln!(w, "    if addr is None:")?;
         writeln!(w, "        continue")?;
         writeln!(w, "    code_unit = _listing.getCodeUnitAt(addr)")?;
         writeln!(w, "    if code_unit is not None:")?;
-        writeln!(w, "        code_unit.setComment(code_unit.EOL_COMMENT, text)")?;
+        writeln!(
+            w,
+            "        code_unit.setComment(code_unit.EOL_COMMENT, text)"
+        )?;
         writeln!(w, "        _applied_c += 1")?;
         writeln!(w)?;
         writeln!(w, "_sym_tbl = currentProgram.getSymbolTable()")?;
         writeln!(w, "for vaddr, name, unused_ns in _labels:")?;
-        writeln!(
-            w,
-            "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))"
-        )?;
+        writeln!(w, "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))")?;
         writeln!(w, "    if addr is None:")?;
         writeln!(w, "        continue")?;
         writeln!(w, "    _sym_tbl.createLabel(addr, name, True)")?;

@@ -38,7 +38,11 @@ fn strings_analyzer_recovers_meaningful_strings() {
     // rustrip contains "make stripped Rust binaries readable again"-adjacent
     // literals in its own error messages and CLI text. We expect at least a
     // handful of recovered strings, none of them empty.
-    assert!(anns.len() > 5, "expected multiple strings, got {}", anns.len());
+    assert!(
+        anns.len() > 5,
+        "expected multiple strings, got {}",
+        anns.len()
+    );
     for a in &anns {
         assert!(!a.label.is_empty(), "empty label");
     }
@@ -86,9 +90,9 @@ fn rejects_truncated_input() {
 
 #[test]
 fn table_output_renders_without_panic() {
+    use rustrip::analyzers::{Annotation, AnnotationKind};
     use rustrip::output::table::Table;
     use rustrip::output::OutputBackend;
-    use rustrip::analyzers::{Annotation, AnnotationKind};
 
     let anns = vec![
         Annotation {
@@ -120,9 +124,9 @@ fn table_output_renders_without_panic() {
 
 #[test]
 fn json_output_serializes() {
+    use rustrip::analyzers::{Annotation, AnnotationKind};
     use rustrip::output::json::Json;
     use rustrip::output::OutputBackend;
-    use rustrip::analyzers::{Annotation, AnnotationKind};
 
     let anns = vec![Annotation {
         vaddr: 0x401000,
@@ -138,9 +142,9 @@ fn json_output_serializes() {
 
 #[test]
 fn ghidra_script_contains_assignments() {
+    use rustrip::analyzers::{Annotation, AnnotationKind};
     use rustrip::output::ghidra::Ghidra;
     use rustrip::output::OutputBackend;
-    use rustrip::analyzers::{Annotation, AnnotationKind};
 
     let anns = vec![Annotation {
         vaddr: 0x401000,
@@ -157,9 +161,9 @@ fn ghidra_script_contains_assignments() {
 
 #[test]
 fn binja_script_contains_assignments() {
+    use rustrip::analyzers::{Annotation, AnnotationKind};
     use rustrip::output::binja::Binja;
     use rustrip::output::OutputBackend;
-    use rustrip::analyzers::{Annotation, AnnotationKind};
 
     let anns = vec![Annotation {
         vaddr: 0x401000,

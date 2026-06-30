@@ -6,9 +6,9 @@
 
 use crate::binary::Binary;
 
+pub mod panics;
 pub mod strings;
 pub mod symbols;
-pub mod panics;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnotationKind {
@@ -40,7 +40,9 @@ pub struct Registry {
 
 impl Registry {
     pub fn new() -> Self {
-        Self { analyzers: Vec::new() }
+        Self {
+            analyzers: Vec::new(),
+        }
     }
 
     pub fn with(mut self, a: Box<dyn Analyzer>) -> Self {

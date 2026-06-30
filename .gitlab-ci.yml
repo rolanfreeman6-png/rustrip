@@ -99,7 +99,6 @@ fmt:
     - rustup component add rustfmt
   script:
     - cargo fmt --all -- --check
-    - cargo fmt --all  # run formatter; CI fails format check above, fmt fix here
 
 clippy:stable:
   stage: lint
