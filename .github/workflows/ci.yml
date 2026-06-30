@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
   schedule:
     # Weekly: cargo-audit against RustSec advisory DB updates.
     - cron: "0 6 * * 1"
@@ -13,10 +14,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 
-# Cancel in-flight CI for the same branch on new pushes.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# Note: previous versions of this workflow used a `concurrency.cancel-in-progress`
+# block keyed on ref+workflow. With zero prior runs cached it cancelled
+# both runs on consecutive pushes before any job executed, producing
+# `conclusion: failure, jobs: 0`. Removed entirely — external pushes are
+# infrequent and the trade-off (one extra minute of compute) is worth the
+# debugging clarity.
 
 jobs:
   # -------------------------------------------------------------------------
