@@ -17,7 +17,7 @@ pub enum AnnotationKind {
     String,
     /// Demangled symbol name.
     Symbol,
-    /// Panic/Unwrap/Expect site with file:line:col.
+    /// Panic/Unwrap/Expect site with `file:line:col`.
     PanicSite,
 }
 
@@ -34,6 +34,7 @@ pub trait Analyzer: Sync {
     fn analyze(&self, bin: &Binary) -> Vec<Annotation>;
 }
 
+#[must_use = "Registry::run produces annotations; discard it and you'll regress the pipeline"]
 pub struct Registry {
     analyzers: Vec<Box<dyn Analyzer>>,
 }
@@ -45,11 +46,16 @@ impl Registry {
         }
     }
 
+    /// Builder-style construction. Cheap; returns `self` for chaining.
+    #[must_use = "appends an analyzer to the pipeline; discarding the returned Registry drops the analyzer from the chain"]
     pub fn with(mut self, a: Box<dyn Analyzer>) -> Self {
         self.analyzers.push(a);
         self
     }
 
+    /// Apply every registered analyzer to `bin` and return a sorted,
+    /// de-duplicated annotation list.
+    #[must_use]
     pub fn run(&self, bin: &Binary) -> Vec<Annotation> {
         let mut out = Vec::new();
         for a in &self.analyzers {
@@ -73,10 +79,11 @@ impl Default for Registry {
     }
 }
 
-/// Drop identical annotations (same vaddr+kind+label) so duplicate slice
-/// references don't bloat the output. Panic sites with the same vaddr but
-/// wildly different line numbers would be suspicious — but identical entries
-/// are common because multiple code paths reference the same `&'static str`.
+/// Drop identical annotations (same `vaddr + kind + label + comment`) so
+/// duplicate slice references don't bloat the output. Panic sites with the
+/// same vaddr but wildly different line numbers would be suspicious — but
+/// identical entries are common because multiple code paths reference the
+/// same `&'static str`.
 fn dedup(out: &mut Vec<Annotation>) {
     out.dedup_by(|a, b| {
         a.vaddr == b.vaddr && a.kind == b.kind && a.label == b.label && a.comment == b.comment
@@ -103,6 +110,3 @@ impl Default for Limits {
         }
     }
 }
-
-// Registry tests live in integration tests where a real Binary fixture is
-// available; the in-module test surface just verifies pure logic.

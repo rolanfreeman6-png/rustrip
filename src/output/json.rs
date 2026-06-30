@@ -43,10 +43,10 @@ impl OutputBackend for Json {
     }
 }
 
-fn kind_str(k: &AnnotationKind) -> &'static str {
-    use AnnotationKind::*;
+const fn kind_str(k: &AnnotationKind) -> &'static str {
+    use AnnotationKind::{PanicSite, String as KString, Symbol};
     match k {
-        String => "string",
+        KString => "string",
         Symbol => "symbol",
         PanicSite => "panic",
     }
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn json_array_shape() {
         let anns = vec![Annotation {
-            vaddr: 0x401000,
+            vaddr: 0x0040_1000,
             kind: AnnotationKind::Symbol,
             label: "core::fmt::write".into(),
             comment: Some("size=128".into()),

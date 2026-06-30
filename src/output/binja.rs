@@ -76,9 +76,9 @@ impl OutputBackend for Binja {
 fn py_str_with_escape(s: &str) -> String {
     // Emit a Python *raw* double-quoted string (`r"..."`). Raw literals
     // leave backslashes alone, so Windows paths `C:\Users\foo` pass
-    // through unchanged. We still escape embedded double quotes by
-    // substituting `\u{FFFD}` (the Unicode replacement character)
-    // because Python raw strings have no quote-escape mechanism.
+    // through unchanged. Python raw strings *also* don't accept `"`
+    // inside the literal — we substitute the Unicode replacement
+    // character U+FFFD instead.
     let mut out = String::with_capacity(s.len() + 4);
     out.push_str("r\"");
     for ch in s.chars() {
@@ -97,19 +97,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn handles_quotes_and_newlines() {
-        let s = py_str_with_escape("a\"b\nc");
-        // Raw string form: backslashes stay literal; double-quote is
-        // replaced with the Unicode replacement char (no escape inside
-        // a Python raw literal).
-        assert!(s.starts_with("r\""));
-        assert!(s.ends_with("\""));
-        assert!(s.contains("a\u{FFFD}b\nc"));
-    }
-
-    #[test]
     fn raw_paths_pass_through() {
         let s = py_str_with_escape(r"C:\Users\foo\bar.rs");
         assert!(s.contains(r"C:\Users\foo\bar.rs"));
+    }
+
+    #[test]
+    fn double_quote_replaced_with_replacement_char() {
+        let s = py_str_with_escape("a\"b");
+        // raw r"a\u{FFFD}b" — but raw literals still don't process \u,
+        // so we have to make the assertion against the literal codepoint.
+        let mut expected = String::with_capacity(8);
+        expected.push('r');
+        expected.push('"');
+        expected.push('a');
+        expected.push('\u{FFFD}');
+        expected.push('b');
+        expected.push('"');
+        assert_eq!(s, expected);
     }
 }

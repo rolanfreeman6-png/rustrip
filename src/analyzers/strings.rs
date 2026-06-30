@@ -1,22 +1,22 @@
-//! Recover `&str` slices from `read-only data` sections.
+//! Recover `&str` slices from read-only data sections.
 //!
-//! Rust string literals are stored as a (ptr, len) fat-pointer pair inside
+//! Rust string literals are stored as `(ptr, len)` fat-pointer pairs in
 //! read-only data sections (ELF: `.rodata`, `.data.rel.ro`; PE: `.rdata`;
-//! Mach-O: `__cstring`/`__const`). Disassemblers see these tables as one
+//! Mach-O: `__cstring` / `__const`). Disassemblers see these tables as one
 //! giant blob of bytes with no internal structure. We walk the tables at
-//! pointer-aligned offsets, dereference each (ptr, len) pair, validate
+//! pointer-aligned offsets, dereference each `(ptr, len)` pair, validate
 //! that the slice lies entirely inside a string-hosting section, and
-//! require valid UTF-8 with at least one printable character.
+//! require valid UTF-8 with at least one alphanumeric character.
 //!
 //! Tuples that fail *any* of those checks are rejected. The combination
-//! of UTF-8 validity, length bounds, and printable-character content
-//! is conservative on real binaries and rejects more than 95% of random
-//! pair collisions in benchmarks on stripped Rust binaries.
+//! of UTF-8 validity, length bounds, and alphanumeric content is
+//! conservative on real binaries and rejects more than 95% of random
+//! pair collisions on stripped ELF/PE artifacts.
 
 use crate::analyzers::{Analyzer, Annotation, AnnotationKind, Limits};
-use crate::binary::{Binary, Section};
+use crate::binary::Binary;
 
-/// Section-name prefixes that may *contain* (ptr, len) slice-headers.
+/// Section-name prefixes that may *contain* `(ptr, len)` slice headers.
 ///
 /// Slices for `&'static str` literals live in the same section as the
 /// string bytes themselves in ELF release builds, so the container is
@@ -31,25 +31,28 @@ const CONTAINER_PATTERNS: &[&str] = &[
     "__DATA,__const",
 ];
 
+#[derive(Debug, Clone)]
 pub struct StringsAnalyzer {
     pub limits: Limits,
 }
 
+impl Default for StringsAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StringsAnalyzer {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             limits: Limits::default(),
         }
     }
 
-    pub fn with_limits(limits: Limits) -> Self {
+    #[must_use]
+    pub const fn with_limits(limits: Limits) -> Self {
         Self { limits }
-    }
-}
-
-impl Default for StringsAnalyzer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -73,7 +76,13 @@ impl Analyzer for StringsAnalyzer {
     }
 }
 
-fn scan_section(bin: &Binary, sec: &Section, ws: usize, max: usize, out: &mut Vec<Annotation>) {
+fn scan_section(
+    bin: &Binary,
+    sec: &crate::binary::Section,
+    ws: usize,
+    max: usize,
+    out: &mut Vec<Annotation>,
+) {
     let data = sec.data.as_slice();
     if data.len() < ws.saturating_mul(2) {
         return;
@@ -84,22 +93,16 @@ fn scan_section(bin: &Binary, sec: &Section, ws: usize, max: usize, out: &mut Ve
     let mut off = 0usize;
     while off.checked_add(ws * 2).is_some_and(|e| e <= data.len()) {
         let lookup = sec.vaddr.checked_add(off as u64).unwrap();
-        let ptr = match bin.read_ptr(lookup) {
-            Some(p) => p,
-            None => {
-                off = off.saturating_add(ws);
-                continue;
-            }
+        let Some(ptr) = bin.read_ptr(lookup) else {
+            off = off.saturating_add(ws);
+            continue;
         };
-        let len = match bin.read_ptr(lookup.wrapping_add(ws as u64)) {
-            Some(l) => l,
-            None => {
-                off = off.saturating_add(ws);
-                continue;
-            }
+        let Some(len) = bin.read_ptr(lookup.wrapping_add(ws as u64)) else {
+            off = off.saturating_add(ws);
+            continue;
         };
 
-        if len < 1 || (len as usize) > max {
+        if len < 1 || (usize::try_from(len).map_or(true, |n: usize| n > max)) {
             off = off.saturating_add(ws);
             continue;
         }
@@ -107,12 +110,9 @@ fn scan_section(bin: &Binary, sec: &Section, ws: usize, max: usize, out: &mut Ve
             off = off.saturating_add(ws);
             continue;
         }
-        let bytes = match bin.read_at_vaddr(ptr, len as usize) {
-            Some(b) => b,
-            None => {
-                off = off.saturating_add(ws);
-                continue;
-            }
+        let Some(bytes) = bin.read_at_vaddr(ptr, usize::try_from(len).unwrap_or(usize::MAX)) else {
+            off = off.saturating_add(ws);
+            continue;
         };
         if !is_reasonable_string(bytes) {
             off = off.saturating_add(ws);
@@ -145,23 +145,19 @@ fn is_container_section(name: &str) -> bool {
 }
 
 /// A candidate slice must be valid UTF-8, contain no control characters,
-/// and contain at least one *alphanumeric* character. Punctuation-only
+/// and contain at least one alphanumeric character. Punctuation-only
 /// runs (e.g. `--`, `::`) are rejected because (a) they almost always
 /// coincide with random `(ptr, len)` alignments inside relocation tables
 /// and (b) real Rust string literals virtually always include at least one
 /// letter or digit.
 fn is_reasonable_string(b: &[u8]) -> bool {
-    let s = match std::str::from_utf8(b) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(s) = std::str::from_utf8(b) else {
+        return false;
     };
     if s.is_empty() {
         return false;
     }
-    if s.chars().any(|c| c.is_control()) {
-        return false;
-    }
-    s.chars().any(|c| c.is_alphanumeric())
+    !s.chars().any(char::is_control) && s.chars().any(char::is_alphanumeric)
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -192,23 +188,23 @@ mod tests {
 
     #[test]
     fn alphanumeric_required() {
-        assert!(is_reasonable_string("hello world".as_bytes()));
-        assert!(is_reasonable_string("src/foo.rs:42".as_bytes()));
-        assert!(is_reasonable_string("v1.2.3-rc1".as_bytes()));
-        assert!(is_reasonable_string("~/path/to/{x}".as_bytes()));
+        assert!(is_reasonable_string(b"hello world"));
+        assert!(is_reasonable_string(b"src/foo.rs:42"));
+        assert!(is_reasonable_string(b"v1.2.3-rc1"));
+        assert!(is_reasonable_string(b"~/path/to/{x}"));
     }
 
     #[test]
     fn punctuation_only_rejected() {
-        assert!(!is_reasonable_string("--".as_bytes()));
-        assert!(!is_reasonable_string("::".as_bytes()));
-        assert!(!is_reasonable_string("...".as_bytes()));
-        assert!(!is_reasonable_string("()".as_bytes()));
+        assert!(!is_reasonable_string(b"--"));
+        assert!(!is_reasonable_string(b"::"));
+        assert!(!is_reasonable_string(b"..."));
+        assert!(!is_reasonable_string(b"()"));
     }
 
     #[test]
     fn truncate_keeps_ellipsis() {
-        let t = truncate("a".repeat(120).as_str(), 10);
+        let t = truncate(&"a".repeat(120), 10);
         assert!(t.chars().count() <= 11);
         assert!(t.ends_with('\u{2026}'));
     }

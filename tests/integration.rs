@@ -4,8 +4,8 @@
 //! of each compiled binary. We point rustrip at itself.
 //!
 //! Self-analysis has two purposes:
-//! 1. exercises the full pipeline (parse → analyzers → output) against a
-//!    real PE/ELF/Mach-O;
+//! 1. exercises the full pipeline (parse → analyzers → output) against
+//!    a real PE/ELF/Mach-O;
 //! 2. ensures regressions in the analyzer logic are caught even if unit
 //!    tests happen to pass.
 
@@ -26,6 +26,11 @@ fn parses_self_binary() {
     let bytes = std::fs::read(&p).expect("read rustrip binary");
     let bin = Binary::parse(Some(p.to_str().unwrap()), bytes).expect("parse");
     assert!(!bin.sections().is_empty(), "must expose >= 1 section");
+    assert!(
+        !bin.string_section_indices().is_empty()
+            || bin.sections().iter().any(|s| !s.data.is_empty()),
+        "binary must contain data we can read"
+    );
 }
 
 #[test]
@@ -38,9 +43,7 @@ fn strings_analyzer_recovers_or_is_safe_on_no_strings() {
     // rustrip's literal count and layout vary across PE / ELF / Mach-O and
     // across debug vs release profiles. We don't require a specific count;
     // we only assert the analyzer did not panic and that any annotations
-    // it produced are well-formed. (Linux debug ELF with stripped symbols
-    // sometimes yields zero annotated strings because (ptr, len) slices are
-    // placed outside the recognised section list — that is acceptable.)
+    // it produced have non-empty labels.
     for a in &anns {
         assert!(!a.label.is_empty(), "empty label at vaddr {:#x}", a.vaddr);
     }
@@ -53,10 +56,6 @@ fn symbols_analyzer_demangles_self_without_panic() {
     let bin = Binary::parse(Some(p.to_str().unwrap()), bytes).expect("parse");
     let analyzer = SymbolsAnalyzer::new();
     let _anns = analyzer.analyze(&bin);
-    // The symbol-count varies wildly between debug and stripped release
-    // builds, and across toolchains. We don't assert a specific count —
-    // we just verify the analyzer does not panic on a complex real-world
-    // binary and accepts the input.
 }
 
 #[test]
@@ -69,7 +68,6 @@ fn full_registry_does_not_panic_on_self() {
         .with(Box::new(SymbolsAnalyzer::new()))
         .with(Box::new(PanicsAnalyzer::new()));
     let anns = r.run(&bin);
-    // Just verify it produces something and does not panic.
     assert!(!anns.is_empty());
 }
 
@@ -81,7 +79,6 @@ fn rejects_garbage_input() {
 
 #[test]
 fn rejects_truncated_input() {
-    // A 2-byte buffer cannot be a valid object.
     let res = Binary::parse(Some("tiny"), b"AB".to_vec());
     assert!(res.is_err());
 }
@@ -94,19 +91,19 @@ fn table_output_renders_without_panic() {
 
     let anns = vec![
         Annotation {
-            vaddr: 0x401000,
+            vaddr: 0x0040_1000,
             kind: AnnotationKind::String,
             label: "hello".into(),
             comment: Some("hello world".into()),
         },
         Annotation {
-            vaddr: 0x401100,
+            vaddr: 0x0040_1100,
             kind: AnnotationKind::Symbol,
             label: "core::fmt::Write::write_str".into(),
             comment: None,
         },
         Annotation {
-            vaddr: 0x401200,
+            vaddr: 0x0040_1200,
             kind: AnnotationKind::PanicSite,
             label: "src/foo.rs:42:9".into(),
             comment: None,
@@ -127,7 +124,7 @@ fn json_output_serializes() {
     use rustrip::output::OutputBackend;
 
     let anns = vec![Annotation {
-        vaddr: 0x401000,
+        vaddr: 0x0040_1000,
         kind: AnnotationKind::String,
         label: "ok".into(),
         comment: None,
@@ -145,7 +142,7 @@ fn ghidra_script_contains_assignments() {
     use rustrip::output::OutputBackend;
 
     let anns = vec![Annotation {
-        vaddr: 0x401000,
+        vaddr: 0x0040_1000,
         kind: AnnotationKind::Symbol,
         label: "core::fmt::write".into(),
         comment: None,
@@ -164,7 +161,7 @@ fn binja_script_contains_assignments() {
     use rustrip::output::OutputBackend;
 
     let anns = vec![Annotation {
-        vaddr: 0x401000,
+        vaddr: 0x0040_1000,
         kind: AnnotationKind::Symbol,
         label: "core::fmt::write".into(),
         comment: None,

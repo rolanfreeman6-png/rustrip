@@ -14,7 +14,6 @@ impl OutputBackend for Table {
         let kind_w = kind_width(anns);
         let label_w = label_width(anns);
 
-        // Header
         writeln!(
             w,
             "{:<18}  {:<kind_w$}  label",
@@ -49,10 +48,10 @@ impl OutputBackend for Table {
     }
 }
 
-fn kind_str(k: &crate::analyzers::AnnotationKind) -> &'static str {
-    use crate::analyzers::AnnotationKind::*;
+const fn kind_str(k: &crate::analyzers::AnnotationKind) -> &'static str {
+    use crate::analyzers::AnnotationKind::{PanicSite, String as KString, Symbol};
     match k {
-        String => "string",
+        KString => "string",
         Symbol => "symbol",
         PanicSite => "panic",
     }
@@ -69,8 +68,8 @@ fn kind_width(anns: &[Annotation]) -> usize {
 fn label_width(anns: &[Annotation]) -> usize {
     let mut w = "label".len();
     for a in anns {
-        let oneline_len = one_line(&a.label, usize::MAX).chars().count();
-        w = w.max(oneline_len.min(120));
+        let chars = a.label.chars().count().min(120);
+        w = w.max(chars);
     }
     w
 }
@@ -128,7 +127,7 @@ mod tests {
     #[test]
     fn renders_address_kind_label() {
         let anns = vec![Annotation {
-            vaddr: 0x401000,
+            vaddr: 0x0040_1000,
             kind: AnnotationKind::String,
             label: "hello".into(),
             comment: None,

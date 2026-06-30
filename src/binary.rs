@@ -2,9 +2,9 @@
 //! translation and size-aware readers.
 //!
 //! The model is intentionally narrow: it exposes only what analyzers need
-//! (sections, symbols, byte reads by virtual address, a target architecture
+//! (`Section`s, `Symbol`s, byte reads by virtual address, target architecture
 //! bitness). Anything richer (full disassembly, relocation processing) is
-//! deliberately out of scope — `rustrip` reasons about data, not control
+//! deliberately out of scope — `rustrip` reasons about *data*, not control
 //! flow, in v0.1.
 
 use anyhow::{anyhow, Context, Result};
@@ -22,8 +22,8 @@ pub struct Section {
     pub name: String,
     pub vaddr: u64,
     pub size: u64,
-    /// Raw section bytes (may be shorter than `size` if the on-disk segment is
-    /// truncated; never longer).
+    /// Raw section bytes (may be shorter than `size` if the on-disk segment
+    /// is truncated; never longer).
     pub data: Vec<u8>,
 }
 
@@ -34,44 +34,63 @@ pub struct Symbol {
     pub size: u64,
 }
 
+/// In-memory parsed object representing a single executable format.
+///
+/// File bytes are kept so that vaddrs can be resolved even if sections were
+/// truncated on disk (NOBITS, sparse Mach-O, etc.) — readers return `None`
+/// rather than panic when ranges fall outside the loaded segment.
 pub struct Binary {
     pub path: Option<String>,
     pub format: BinaryFormat,
     pub arch: String,
-    /// `true` for 64-bit objects, `false` for 32-bit. Analyzers use this to
-    /// size pointer reads.
+    /// `true` for 64-bit objects, `false` for 32-bit. Analyzers size their
+    /// pointer reads off this flag.
     pub is_64: bool,
     pub little_endian: bool,
     pub bytes: Vec<u8>,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
 
-    /// Sorted by vaddr for binary-search lookup: `(vaddr_begin, vaddr_end, section_index)`.
-    /// The range is `[begin, end)`.
+    /// Sorted by vaddr for binary-search lookup: `(vaddr_begin, vaddr_end_exclusive, section_index)`
+    /// where the address range covered is `[begin, end)`.
     sec_by_vaddr: Vec<(u64, u64, usize)>,
-    /// Indices into `sections` of sections we believe may *host* string bytes.
+    /// Indices into `sections` of sections we believe may host string bytes.
     string_sections: Vec<usize>,
 }
 
 impl Binary {
+    /// Parse a raw object file (ELF, PE, or single-arch Mach-O).
+    ///
+    /// The input is cloned once internally so that the parsed object's
+    /// `&[u8]` references (via `Elf<'_>`, `PE<'_>`, `Mach<'_>`) stay valid
+    /// until we finish copying them out into owned types.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when goblin cannot recognize the format, when the
+    /// object is truncated, when an ar archive is passed (we do not
+    /// dereference archive members in v0.1), or when a Mach-O fat archive
+    /// is passed (we only support single-arch slices).
     pub fn parse(path: Option<&str>, bytes: Vec<u8>) -> Result<Self> {
-        // goblin parsers borrow from the input buffer. We pass a clone to
-        // the parser and keep the original in `bytes` — this is required
-        // because every parsed view (`Elf<'_>` etc.) carries `&[u8]` slices
-        // into the buffer it parsed, so we cannot move the buffer until
-        // all such references are dropped.
         let parse_buffer = bytes.clone();
         let obj = Object::parse(&parse_buffer).context("goblin: failed to parse object")?;
         match obj {
-            Object::Elf(elf) => load_elf(path, elf, bytes),
-            Object::PE(pe) => load_pe(path, pe, bytes),
-            Object::Mach(mach) => load_mach(path, mach, bytes),
+            Object::Elf(elf) => load_elf(path, &elf, bytes),
+            Object::PE(pe) => load_pe(path, &pe, bytes),
+            Object::Mach(mach) => load_mach(path, &mach, bytes),
             _ => Err(anyhow!("unsupported object kind (likely archive)")),
         }
     }
 
-    /// Translate a virtual address to a (section_index, offset_within_section)
-    /// pair. Returns `None` if the vaddr falls outside all sections.
+    /// Translate `vaddr` to `(section_index, offset_within_section)`. Returns
+    /// `None` if `vaddr` falls outside the span of any loaded section.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(vaddr - section_start)` does not fit in `usize` — only
+    /// possible on platforms with 32-bit pointers where the section rises
+    /// above `usize::MAX` bytes. We do not support building on such a host.
+    #[must_use]
     pub fn vaddr_to_offset(&self, vaddr: u64) -> Option<(usize, usize)> {
         let idx = self.sec_by_vaddr.binary_search_by(|(start, end, _)| {
             if vaddr < *start {
@@ -82,20 +101,17 @@ impl Binary {
                 std::cmp::Ordering::Equal
             }
         });
-        match idx {
-            Ok(i) => {
-                let (start, _end, sec_i) = self.sec_by_vaddr[i];
-                let off_in_sec = (vaddr - start) as usize;
-                Some((sec_i, off_in_sec))
-            }
-            Err(_) => None,
-        }
+        idx.ok().map(|i| {
+            let (start, _end, sec_i) = self.sec_by_vaddr[i];
+            let off_in_sec = usize::try_from(vaddr - start)
+                .expect("vaddr-to-offset: offset within section fits usize on supported targets");
+            (sec_i, off_in_sec)
+        })
     }
 
-    /// Read `len` bytes at a virtual address. Returns `None` if any byte falls
-    /// outside the section bounds or the underlying section's `data` is too
-    /// short (e.g. truncated / NOBITS). Always succeeds within a section
-    /// whose `data` has full coverage.
+    /// Read `len` bytes at `vaddr`. Returns `None` if any byte falls
+    /// outside the section bounds or the backing `data` is too short.
+    #[must_use]
     pub fn read_at_vaddr(&self, vaddr: u64, len: usize) -> Option<&[u8]> {
         let (sec_i, off) = self.vaddr_to_offset(vaddr)?;
         let sec = &self.sections[sec_i];
@@ -106,7 +122,8 @@ impl Binary {
     }
 
     /// Read a pointer-sized value (4 bytes on 32-bit, 8 on 64-bit) at
-    /// `vaddr`, with the binary's own endianness.
+    /// `vaddr`, respecting the binary's endianness.
+    #[must_use]
     pub fn read_ptr(&self, vaddr: u64) -> Option<u64> {
         let sz = if self.is_64 { 8 } else { 4 };
         let bytes = self.read_at_vaddr(vaddr, sz)?;
@@ -117,6 +134,8 @@ impl Binary {
         })
     }
 
+    /// Read a u32 (little- or big-endian per `self.little_endian`).
+    #[must_use]
     pub fn read_u32(&self, vaddr: u64) -> Option<u32> {
         let bytes = self.read_at_vaddr(vaddr, 4)?;
         Some(if self.little_endian {
@@ -126,9 +145,9 @@ impl Binary {
         })
     }
 
-    /// True if `vaddr..vaddr+len` lies entirely inside a section that we
-    /// classify as hosting string bytes (read-only data across supported
-    /// formats).
+    /// `true` if `vaddr..vaddr+len` lies entirely inside a section
+    /// classified as hosting string bytes (read-only data across formats).
+    #[must_use]
     pub fn vaddr_in_string_section(&self, vaddr: u64, len: u64) -> bool {
         for &i in &self.string_sections {
             let sec = &self.sections[i];
@@ -143,10 +162,16 @@ impl Binary {
         false
     }
 
+    /// Indices into `self.sections` of sections classified as hosting
+    /// string bytes (`.rodata*`, `.rdata*`, `__cstring`, ...).
+    #[must_use]
     pub fn string_section_indices(&self) -> &[usize] {
         &self.string_sections
     }
 
+    /// All sections parsed from the object file (not all are guaranteed
+    /// to contain parseable bytes — some are NOBITS or sparse).
+    #[must_use]
     pub fn sections(&self) -> &[Section] {
         &self.sections
     }
@@ -159,17 +184,23 @@ impl Binary {
 // can be eliminated cleanly.
 // ---------------------------------------------------------------------------
 
-fn load_elf(path: Option<&str>, elf: elf::Elf<'_>, bytes: Vec<u8>) -> Result<Binary> {
+// We return `Result<Binary>` uniformly from all three loaders so that
+// `Binary::parse`'s caller code stays symmetric. The inner loaders can't
+// fail for ELF in v0.1, but we keep the signature stable for the day
+// when they can (e.g., a malformed Mach-O archive detection).
+#[allow(clippy::unnecessary_wraps)]
+fn load_elf(path: Option<&str>, elf: &elf::Elf<'_>, bytes: Vec<u8>) -> Result<Binary> {
     let is_64 = elf.is_64;
     let little_endian = elf.little_endian;
     let arch = arch_name_elf(elf.header.e_machine);
     let cap = bytes.len();
 
     let mut sections: Vec<Section> = Vec::new();
-    for sc in elf.section_headers.iter() {
+    for sc in &elf.section_headers {
         let name = elf.shdr_strtab.get_at(sc.sh_name).unwrap_or("").to_string();
-        let off = sc.sh_offset as usize;
-        let sz = sc.sh_size as usize;
+        let off = usize::try_from(sc.sh_offset)
+            .expect("ELF: section file offset exceeds usize on this host");
+        let sz = usize::try_from(sc.sh_size).expect("ELF: section size exceeds usize on this host");
         let data = if sz == 0 {
             Vec::new()
         } else if let Some(end) = off.checked_add(sz) {
@@ -196,9 +227,8 @@ fn load_elf(path: Option<&str>, elf: elf::Elf<'_>, bytes: Vec<u8>) -> Result<Bin
         if sym.st_value == 0 {
             continue;
         }
-        let raw = match elf.strtab.get_at(sym.st_name) {
-            Some(s) => s,
-            None => continue,
+        let Some(raw) = elf.strtab.get_at(sym.st_name) else {
+            continue;
         };
         if raw.is_empty() {
             continue;
@@ -226,17 +256,20 @@ fn load_elf(path: Option<&str>, elf: elf::Elf<'_>, bytes: Vec<u8>) -> Result<Bin
     Ok(bin)
 }
 
-fn load_pe(path: Option<&str>, pe: pe::PE<'_>, bytes: Vec<u8>) -> Result<Binary> {
+#[allow(clippy::unnecessary_wraps)]
+fn load_pe(path: Option<&str>, pe: &pe::PE<'_>, bytes: Vec<u8>) -> Result<Binary> {
     let is_64 = pe.is_64;
     let arch = arch_name_pe(pe.header.coff_header.machine);
     let cap = bytes.len();
-    let base = pe.image_base as u64;
+    let base = pe.image_base as u64; // goblin types this as `usize`; `as` is lossless on supported targets
 
     let mut sections: Vec<Section> = Vec::new();
-    for sc in pe.sections.iter() {
+    for sc in &pe.sections {
         let name = sc.name().unwrap_or("").to_string();
-        let off = sc.pointer_to_raw_data as usize;
-        let sz = sc.size_of_raw_data as usize;
+        let off = usize::try_from(sc.pointer_to_raw_data)
+            .expect("PE: section raw pointer exceeds usize on this host");
+        let sz = usize::try_from(sc.size_of_raw_data)
+            .expect("PE: section raw size exceeds usize on this host");
         let data = if sz == 0 {
             Vec::new()
         } else if let Some(end) = off.checked_add(sz) {
@@ -250,21 +283,18 @@ fn load_pe(path: Option<&str>, pe: pe::PE<'_>, bytes: Vec<u8>) -> Result<Binary>
         } else {
             Vec::new()
         };
-        let vaddr = base.wrapping_add(sc.virtual_address as u64);
+        let vaddr = base.wrapping_add(u64::from(sc.virtual_address));
         sections.push(Section {
             name,
             vaddr,
-            size: sc.virtual_size as u64,
+            size: u64::from(sc.virtual_size),
             data,
         });
     }
 
     let mut symbols: Vec<Symbol> = Vec::new();
-    for exp in pe.exports.iter() {
-        let raw = match exp.name {
-            Some(n) => n,
-            None => continue,
-        };
+    for exp in &pe.exports {
+        let Some(raw) = exp.name else { continue };
         if raw.is_empty() {
             continue;
         }
@@ -291,10 +321,10 @@ fn load_pe(path: Option<&str>, pe: pe::PE<'_>, bytes: Vec<u8>) -> Result<Binary>
     Ok(bin)
 }
 
-fn load_mach(path: Option<&str>, mach: mach::Mach<'_>, bytes: Vec<u8>) -> Result<Binary> {
+fn load_mach(path: Option<&str>, mach: &mach::Mach<'_>, bytes: Vec<u8>) -> Result<Binary> {
     let mach_bin = match mach {
         mach::Mach::Binary(b) => b,
-        _ => return Err(anyhow!("Mach-O fat archives are not supported")),
+        mach::Mach::Fat(_) => return Err(anyhow!("Mach-O fat archives are not supported")),
     };
     let is_64 = mach_bin.is_64;
     let mut sections: Vec<Section> = Vec::new();
@@ -306,7 +336,7 @@ fn load_mach(path: Option<&str>, mach: mach::Mach<'_>, bytes: Vec<u8>) -> Result
             let name = if segname.is_empty() {
                 sectname
             } else {
-                format!("{}.{}", segname, sectname)
+                format!("{segname}.{sectname}")
             };
             sections.push(Section {
                 name,
@@ -393,7 +423,7 @@ fn is_string_section_name(name: &str) -> bool {
 }
 
 fn arch_name_elf(machine: u16) -> String {
-    use goblin::elf::header::*;
+    use goblin::elf::header::{EM_386, EM_AARCH64, EM_ARM, EM_MIPS, EM_PPC64, EM_RISCV, EM_X86_64};
     match machine {
         EM_X86_64 => "x86_64".into(),
         EM_386 => "x86".into(),
@@ -402,18 +432,20 @@ fn arch_name_elf(machine: u16) -> String {
         EM_RISCV => "riscv".into(),
         EM_PPC64 => "ppc64".into(),
         EM_MIPS => "mips".into(),
-        _ => format!("elf:{}", machine),
+        _ => format!("elf:{machine}"),
     }
 }
 
 fn arch_name_pe(machine: u16) -> String {
-    use goblin::pe::header::*;
+    use goblin::pe::header::{
+        COFF_MACHINE_ARM, COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64,
+    };
     match machine {
         COFF_MACHINE_X86_64 => "x86_64".into(),
         COFF_MACHINE_X86 => "x86".into(),
         COFF_MACHINE_ARM64 => "aarch64".into(),
         COFF_MACHINE_ARM => "arm".into(),
-        _ => format!("pe:{}", machine),
+        _ => format!("pe:{machine}"),
     }
 }
 
@@ -453,9 +485,9 @@ mod tests {
     #[test]
     fn read_ptr_endianness_le() {
         let mut b = fake_binary_empty();
-        // 0x1122334455667788 little-endian
+        // 0x1122_3344_5566_7788 little-endian
         b.sections[0].data[..8].copy_from_slice(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
-        assert_eq!(b.read_ptr(0x2000).unwrap(), 0x1122334455667788);
+        assert_eq!(b.read_ptr(0x2000).unwrap(), 0x1122_3344_5566_7788);
     }
 
     #[test]

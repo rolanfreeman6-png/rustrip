@@ -1,4 +1,4 @@
-//! Demangle Rust symbol names from .symtab / .dynsym.
+//! Demangle Rust symbol names from .symtab / .dynsym / PE exports.
 //!
 //! Covers both the legacy `_ZN…E` (C++-style Itanium) mangling used by
 //! rustc pre-1.70 and the v0 `_R…` mangling introduced afterward. The
@@ -8,17 +8,13 @@
 use crate::analyzers::{Analyzer, Annotation, AnnotationKind};
 use crate::binary::Binary;
 
+#[derive(Debug, Clone, Default)]
 pub struct SymbolsAnalyzer;
 
 impl SymbolsAnalyzer {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
-    }
-}
-
-impl Default for SymbolsAnalyzer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -48,13 +44,10 @@ impl Analyzer for SymbolsAnalyzer {
 
 fn try_demangle(raw: &str) -> String {
     // rustc_demangle 0.1 exposes `try_demangle` which returns
-    // `Option<Demangle<'_>>` if `raw` looks like a Rust symbol. The struct's
-    // `Display` impl renders the canonical human-readable form (with the
-    // version+hash suffix suppressed for stable output).
-    match rustc_demangle::try_demangle(raw) {
-        Ok(d) => d.to_string(),
-        Err(_) => raw.to_string(),
-    }
+    // `Result<Demangle<'_>, TryDemangleError>` if `raw` cannot be parsed as
+    // a Rust symbol. The struct's `Display` impl renders the canonical
+    // human-readable form (with the version+hash suffix suppressed).
+    rustc_demangle::try_demangle(raw).map_or_else(|_| raw.to_string(), |d| d.to_string())
 }
 
 #[cfg(test)]
@@ -64,13 +57,13 @@ mod tests {
     #[test]
     fn demangles_v0() {
         let s = try_demangle("_RNvCs4fqI2P2rA4_7mycrate3foo");
-        assert!(s.contains("mycrate"), "got: {}", s);
+        assert!(s.contains("mycrate"), "got: {s}");
     }
 
     #[test]
     fn demangles_legacy() {
         let s = try_demangle("_ZN7mycrate3fooE");
-        assert!(s.contains("mycrate"), "got: {}", s);
+        assert!(s.contains("mycrate"), "got: {s}");
     }
 
     #[test]

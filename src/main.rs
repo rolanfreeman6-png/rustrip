@@ -18,7 +18,8 @@ use rustrip::output::{
     name = "rustrip",
     version,
     about = "Make stripped Rust binaries readable again",
-    long_about = "rustrip recovers `&str` slice boundaries, demangles Rust symbols, \
+    long_about = "Make stripped Rust binaries readable again.\n\n\
+                  rustrip recovers `&str` slice boundaries, demangles Rust symbols, \
                   and reconstructs panic site source locations from release/stripped \
                   ELF, PE, and Mach-O binaries. Outputs to a table, JSON, or a Ghidra/\
                   Binary Ninja Python script that re-applies annotations."

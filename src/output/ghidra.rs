@@ -11,11 +11,6 @@
 //! (typically strings) and `createLabel` for symbol names. Panic sites
 //! show up as labels — those are useful jump targets when debugging a
 //! crash report.
-//!
-//! NOTE on `writeln!` escaping: the Python source we're emitting contains
-//! literal `{}` (placeholder) and `{...}` (format-spec) syntax. To embed
-//! those inside a Rust `writeln!` we double-brace: `{{` produces a literal
-//! `{` in the output.
 
 use crate::analyzers::{Annotation, AnnotationKind};
 use crate::output::OutputBackend;
@@ -73,7 +68,11 @@ impl OutputBackend for Ghidra {
         writeln!(w, "_applied_c = 0")?;
         writeln!(w, "_applied_l = 0")?;
         writeln!(w, "for vaddr, text in _comments:")?;
-        // Python format-spec `0x{vaddr:x}` — emit literal by doubling braces.
+        // The `0x{{:x}}.format(...)` text intentionally contains Python's
+        // format-spec syntax; clippy's literal-string-with-formatting-args
+        // lint cannot tell that our outer `writeln!` is emitting Python
+        // code, not consuming Rust format args.
+        #[allow(clippy::literal_string_with_formatting_args)]
         writeln!(w, "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))")?;
         writeln!(w, "    if addr is None:")?;
         writeln!(w, "        continue")?;
@@ -87,6 +86,7 @@ impl OutputBackend for Ghidra {
         writeln!(w)?;
         writeln!(w, "_sym_tbl = currentProgram.getSymbolTable()")?;
         writeln!(w, "for vaddr, name, unused_ns in _labels:")?;
+        #[allow(clippy::literal_string_with_formatting_args)]
         writeln!(w, "    addr = _af.getAddress(\"0x{{:x}}\".format(vaddr))")?;
         writeln!(w, "    if addr is None:")?;
         writeln!(w, "        continue")?;
@@ -101,20 +101,19 @@ impl OutputBackend for Ghidra {
     }
 }
 
-fn label_prefix(k: &AnnotationKind) -> &'static str {
-    use AnnotationKind::*;
+const fn label_prefix(k: &AnnotationKind) -> &'static str {
+    use AnnotationKind::{PanicSite, String as KString, Symbol};
     match k {
-        Symbol => "",
         PanicSite => "rustrip_panic",
-        String => "",
+        Symbol | KString => "",
     }
 }
 
 fn py_str(s: &str) -> String {
-    // Emit a Python *raw* triple-quoted string (`r'''...'''`). Raw literals
-    // do not interpret backslash sequences, so Windows paths like
-    // `C:\Users\foo` survive intact. We still have to escape a run of
-    // three consecutive single quotes inside the input — we substitute
+    // Emit a Python *raw* triple-quoted string (`r'''...'''`). Raw
+    // literals do not interpret backslash sequences, so Windows paths
+    // like `C:\Users\foo` survive intact. We still have to escape a run
+    // of three consecutive single quotes inside the input — we substitute
     // the third of every triple with a space, breaking the run.
     let mut safe = String::with_capacity(s.len() + 6);
     safe.push_str("r'''");
@@ -154,15 +153,12 @@ mod tests {
     fn py_str_pads_run_of_three_quotes() {
         let s = py_str("abc'''xyz");
         let inner = &s[4..s.len() - 3]; // after r'''
-        assert!(inner.contains("abc'' xyz"), "got inner: {}", inner);
-        assert!(!inner.contains("'''"), "incomplete escape: {}", inner);
+        assert!(inner.contains("abc'' xyz"), "got inner: {inner}");
+        assert!(!inner.contains("'''"), "incomplete escape: {inner}");
     }
 
     #[test]
     fn py_str_is_raw_literal_for_paths() {
-        // Backslashes must NOT become Python escape sequences. The
-        // literal must be a raw triple-quoted string so files like
-        // `C:\Users\foo\bar.rs` survive unchanged.
         let s = py_str(r"C:\Users\foo\bar.rs");
         assert!(s.starts_with("r'''"));
         assert!(s.contains(r"C:\Users\foo\bar.rs"));
