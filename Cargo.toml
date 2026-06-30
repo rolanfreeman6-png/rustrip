@@ -1,0 +1,36 @@
+[package]
+name = "rustrip"
+version = "0.1.0"
+edition = "2021"
+description = "Make stripped Rust binaries readable again: recover slice-string boundaries, demangle symbols, and reconstruct panic source locations from release/stripped ELF/PE binaries."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rustrip/rustrip"
+readme = "README.md"
+keywords = ["reverse-engineering", "binary-analysis", "rust", "demangle", "malware"]
+categories = ["development-tools::debugging", "parsing", "reverse-engineering"]
+
+[lib]
+name = "rustrip"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustrip"
+path = "src/main.rs"
+
+[dependencies]
+goblin = { version = "0.8", default-features = false, features = ["std", "elf32", "elf64", "pe32", "pe64", "mach32", "mach64"] }
+rustc-demangle = "0.1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"

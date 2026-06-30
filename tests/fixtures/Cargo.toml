@@ -1,0 +1,15 @@
+[package]
+name = "fixture_sample"
+version = "0.0.0"
+edition = "2021"
+publish = false
+default-run = "sample"
+
+[[bin]]
+name = "sample"
+path = "sample.rs"
+
+[profile.release]
+opt-level = 3
+strip = "symbols"
+lto = false
