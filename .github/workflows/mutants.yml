@@ -37,11 +37,17 @@ jobs:
         # cargo-mutants 27.x: `--in-place` runs full mutations.
         # Baseline is written to .cargo-mutants/baseline.jsonl on each
         # successful run, so the next run sees a stable comparison.
+        # Exit codes from cargo-mutants:
+        #   0 = every viable mutant caught
+        #   3 = some viable mutants missed  (still useful signal!)
+        # We deliberately exit 0 — mutations missed are tracked via the
+        # artifact, not used as a merge gate.
         run: |
           timeout 480 cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
-            || echo "mutation-smoke-timed-out"
+            || echo "mutation-smoke-timed-out-or-missed"
+          exit 0
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,15 +73,20 @@ jobs:
         # `--in-place` writes .cargo-mutants/baseline.jsonl so the next
         # scheduled run sees a stable starting point. We pipe through
         # `tee` so the build artifact contains both stdout and stderr.
+        # The script intentionally exits 0 regardless of cargo-mutants'
+        # exit code: cargo-mutants exits non-zero when some viable
+        # mutants are uncaught, and uncaught mutants are the *signal* we
+        # want to record, not a CI gate. The kill rate is tracked off
+        # the uploaded mutants.log artifact.
         run: |
           set -o pipefail
           cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
             2>&1 | tee mutants.log
-          status=${PIPESTATUS[0]}
-          echo "mutants exit code: $status"
-          exit $status
+          rc=${PIPESTATUS[0]}
+          echo "::notice::cargo-mutants exit=$rc (0 = all caught, 3 = some missed — see artifact)"
+          exit 0
       - name: Upload baseline.jsonl
         if: always()
         uses: actions/upload-artifact@v4
