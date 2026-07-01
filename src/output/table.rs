@@ -133,7 +133,9 @@ mod tests {
             comment: None,
         }];
         let mut buf = Vec::new();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         Table.render(&anns, &mut buf).unwrap();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("0x401000"));
         assert!(s.contains("string"));

@@ -92,7 +92,14 @@ fn scan_section(
     // We rely on the validity checks to reject near-misses.
     let mut off = 0usize;
     while off.checked_add(ws * 2).is_some_and(|e| e <= data.len()) {
-        let lookup = sec.vaddr.checked_add(off as u64).unwrap();
+        // Wraparound-protected walker:
+        //   `sec.vaddr.checked_add(off as u64)` saturates if the section
+        //   vaddr is so large that adding the dataset offset overflows
+        //   u64. Stop the walk in that case — malicious binaries padding
+        //   u64::MAX shouldn't be able to overflow our pointer arithmetic.
+        let Some(lookup) = sec.vaddr.checked_add(off as u64) else {
+            break;
+        };
         let Some(ptr) = bin.read_ptr(lookup) else {
             off = off.saturating_add(ws);
             continue;

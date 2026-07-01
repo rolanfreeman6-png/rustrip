@@ -1,0 +1,20 @@
+# Bandit config for rustrip's Python harness scripts.
+# Format: bandit-native. Loaded with `bandit -c .bandit`.
+
+exclude_dirs:
+  - target
+  - .cargo
+  - .git
+  - examples
+  - tests
+  - fuzz
+
+# B404 — subprocess import → expected by design (we DO shell out).
+# B603 — subprocess call without shell=True → expected (we never use shell).
+# Both are allowed because the harness scripts always pass static argv
+# lists with shell=False (or omit it, which defaults to False).
+skips:
+  - B404
+  - B603
+
+

@@ -66,7 +66,9 @@ mod tests {
             comment: Some("size=128".into()),
         }];
         let mut buf = Vec::new();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         Json.render(&anns, &mut buf).unwrap();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("\"vaddr\": \"0x401000\""));
         assert!(s.contains("\"kind\": \"symbol\""));

@@ -175,6 +175,44 @@ impl Binary {
     pub fn sections(&self) -> &[Section] {
         &self.sections
     }
+
+    /// Test-utility constructor: build a `Binary` from a set of
+    /// precomputed sections and (optionally) symbols.
+    ///
+    /// Used by integration tests to construct minimal-but-representative
+    /// blobs without going through goblin's parser. The internal indices
+    /// are rebuilt from the provided sections before the function returns.
+    /// `force_string_sections` lets a test bypass the name-based
+    /// predicate and pin specific sections as string-hosting.
+    ///
+    /// ⚠️ Public-but-test-oriented. Production callers should use
+    /// `Binary::parse`. The signature may change without notice.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn from_test_parts(
+        format: BinaryFormat,
+        is_64: bool,
+        little_endian: bool,
+        sections: Vec<Section>,
+        symbols: Vec<Symbol>,
+        force_string_sections: Vec<usize>,
+    ) -> Self {
+        let mut bin = Self {
+            path: None,
+            format,
+            arch: "test".into(),
+            is_64,
+            little_endian,
+            bytes: vec![],
+            sections,
+            symbols,
+            sec_by_vaddr: Vec::new(),
+            string_sections: Vec::new(),
+        };
+        bin.build_indices();
+        bin.string_sections = force_string_sections;
+        bin
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +514,7 @@ mod tests {
     #[test]
     fn vaddr_lookup_in_range() {
         let b = fake_binary_empty();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         let r = b.vaddr_to_offset(0x2000 + 5).unwrap();
         assert_eq!(r, (0, 5));
         assert!(b.vaddr_to_offset(0x3000).is_none());
@@ -487,6 +526,7 @@ mod tests {
         let mut b = fake_binary_empty();
         // 0x1122_3344_5566_7788 little-endian
         b.sections[0].data[..8].copy_from_slice(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         assert_eq!(b.read_ptr(0x2000).unwrap(), 0x1122_3344_5566_7788);
     }
 

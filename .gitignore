@@ -5,3 +5,8 @@ Cargo.lock.bak
 .DS_Store
 .idea/
 .vscode/
+# cargo-mutants logs (regenerated on every run).
+mutations.log/
+mutations2.log/
+mutations.jsonl
+

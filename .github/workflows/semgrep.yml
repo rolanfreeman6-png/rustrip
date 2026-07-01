@@ -1,0 +1,55 @@
+name: semgrep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly on Monday — catches new advisories in p/rust, p/python, p/bash.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  semgrep-blocking:
+    name: semgrep (errors must be 0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          # docker_image_uri pins reproducibility; we use the default
+          # as maintained by the Semgrep team.
+          config: >-
+            .semgrep.yml
+            p/rust
+            p/python
+            p/bash
+          severity: ERROR
+          error: true
+          auditOn: frontend
+
+  semgrep-soft:
+    name: semgrep (warnings, advisory only)
+    runs-on: ubuntu-latest
+    needs: semgrep-blocking
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            .semgrep.yml
+            p/rust
+            p/python
+            p/bash
+          severity: WARNING
+          severity: INFO
+          # NOT `error: true` — warnings are tracked but don't gate the
+          # build, since p/* registries churn over time and we don't
+          # want every minor advisory to break merges.
+          auditOn: frontend

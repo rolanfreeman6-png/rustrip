@@ -168,7 +168,9 @@ mod tests {
     fn renders_script_header() {
         let anns: Vec<Annotation> = vec![];
         let mut buf = Vec::new();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         Ghidra.render(&anns, &mut buf).unwrap();
+        // nosemgrep: rustrip-no-unwrapping-trust-bytes (test code)
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("currentProgram"));
         assert!(s.contains("_comments"));

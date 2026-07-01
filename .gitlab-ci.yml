@@ -24,6 +24,7 @@
 
 stages:
   - lint
+  - sast
   - security
   - build
   - test
@@ -344,6 +345,52 @@ fuzz:smoke:
   rules:
     - when: manual
   allow_failure: true
+
+# ============================================================================
+# Stage: sast - static application security testing
+# ============================================================================
+
+semgrep:
+  stage: sast
+  <<: *linux
+  before_script:
+    - pip install --quiet --disable-pip-version-check semgrep bandit
+  script:
+    # Custom rustrip ruleset must give zero errors.
+    - semgrep --config .semgrep.yml --metrics off --severity ERROR --error .
+    # Public registries are tracked but soft-fail: they churn rapidly
+    # and we don't want every minor advisory to block a merge.
+    - semgrep --config p/rust --config p/python --config p/bash --metrics off --severity ERROR --error . || echo "::soft::public-registries-error-set"
+  artifacts:
+    when: always
+    paths:
+      - semgrep.log
+    expire_in: 7 days
+
+bandit:
+  stage: sast
+  <<: *linux
+  before_script:
+    - pip install --quiet --disable-pip-version-check bandit
+  script:
+    - bandit -r scripts/ -ll --exit-zero-on-warnings
+  artifacts:
+    when: always
+    paths:
+      - bandit.log
+    expire_in: 7 days
+
+shellcheck:
+  stage: sast
+  <<: *linux
+  before_script:
+    - apt-get update -y && apt-get install -y --no-install-recommends shellcheck
+  script:
+    - shellcheck scripts/*.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: manual
 
 # ============================================================================
 # Stage: release

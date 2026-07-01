@@ -1,0 +1,91 @@
+rules:
+  # rustrip-specific custom Semgrep ruleset. Run via:
+  #   semgrep --config .semgrep.yml .
+  # The Rust community ruleset (p/rust) is included separately in CI.
+  - id: rustrip-no-unwrapping-trust-bytes
+    message: |
+      Bare `.unwrap()` is forbidden in library/analyzer code paths
+      because we operate on untrusted binary-input bytes; panicking in
+      a library is a correctness bug. Use `.expect()` with a documented
+      reason, or `?` with a typed error. (`.unwrap_or(X)` is allowed
+      because it always returns a sensible default rather than panic.)
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - src/
+        - "*.rs"
+    paths-exclude:
+      - src/main.rs
+      - tests/
+      - examples/
+    patterns:
+      - pattern: "$X.unwrap()"
+
+  - id: rustrip-no-unsafe
+    message: |
+      `unsafe` requires a reviewer-signed note in docs/. We currently
+      do not use unsafe in rustrip (Rust + goblin offsets are bounds-
+      checked everywhere). If you need it, document the invariant in a
+      `// SAFETY:` comment that links to the upstream invariant in
+      goblin / scroll.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - src/
+        - "*.rs"
+    patterns:
+      - pattern: "unsafe { ... }"
+
+  - id: rustrip-cli-file-open-is-info-only
+    message: |
+      `std::fs::File::open(path)` from CLI is an intrinsic operator of
+      this tool — we open the file the user pointed at. Document in
+      CONTRIBUTING.md why we do NOT canonicalize the path.
+    severity: INFO
+    languages: [rust]
+    paths:
+      include:
+        - src/main.rs
+    patterns:
+      - pattern: std::fs::File::open($PATH)
+
+  - id: bash-no-unquoted-variables
+    message: |
+      Unquoted variable expansions in shell scripts cause word-splitting
+      and globbing surprises (matches shellcheck SC2086). Quote them.
+    severity: WARNING
+    languages: [bash]
+    paths:
+      include:
+        - "**/scripts/*.sh"
+    pattern-regex: '"\$([A-Za-z_][A-Za-z0-9_]*)"'
+
+  - id: python-assert-balanced
+    message: |
+      Avoid bare-`assert` in release code — it strips out under
+      `python -O`. Use explicit `if/raise` so invariant violations
+      stay loud in production CI.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "**/scripts/*.py"
+    pattern: |
+      assert $X
+
+  - id: python-no-os-system
+    message: |
+      `os.system` and `os.popen` shell out via /bin/sh. Use
+      `subprocess.run([...], shell=False, ...)` with an explicit argv
+      list. Both `scripts/adversarial_test.py` and
+      `scripts/robustness_test.py` follow this convention.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "**/scripts/*.py"
+    pattern-either:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
