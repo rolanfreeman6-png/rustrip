@@ -367,8 +367,6 @@ mutants:check:mr:
   before_script:
     - cargo install --locked cargo-mutants
   script:
-    # --check mode: compare without rewriting the baseline. 8-minute
-    # soft budget; failure here is informational.
     - timeout 480 cargo mutants --in-place --no-shuffle --timeout 60 --check || echo "::warning::mutants-check-not-clean"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -385,7 +383,6 @@ mutants:full:push:
   before_script:
     - cargo install --locked cargo-mutants
   script:
-    # 60-minute hard cap to keep runners within budget.
     - timeout 3600 cargo mutants --in-place --no-shuffle --timeout 60 --rebaseline || exit $?
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

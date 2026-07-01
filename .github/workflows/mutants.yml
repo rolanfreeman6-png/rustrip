@@ -27,20 +27,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-mutants
-        run: cargo install --locked --root "$RUNNER_TEMP" cargo-mutants
+      - name: Install cargo-mutants (persistent default cargo bin)
+        # Install to the default cargo bin so the next step's $PATH
+        # already includes it. Installing under $RUNNER_TEMP/bin
+        # survives only within a single step; `run` in a separate step
+        # sees an empty PATH and 127s.
+        run: cargo install --locked cargo-mutants
       - name: Mutation smoke (PR / 8 minute budget)
-        # For PRs we don't need a full 25-minute run; `--check` is a
-        # fast mode that compares against the cached baseline without
-        # writing new scored output. Most early-stage PRs complete in
-        # under 8 minutes; if they exceed, signal-only (allow_failure).
         run: |
-          timeout 480 \
-            "$RUNNER_TEMP/bin/cargo" mutants \
-              --in-place --no-shuffle \
-              --timeout 60 \
-              --check \
-              mutants/ || echo "mutation-smoke-timed-out"
+          timeout 480 cargo mutants \
+            --in-place --no-shuffle \
+            --timeout 60 \
+            --check \
+            mutants/ || echo "mutation-smoke-timed-out"
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
@@ -61,15 +60,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-mutants
-        run: cargo install --locked --root "$RUNNER_TEMP" cargo-mutants
+        run: cargo install --locked cargo-mutants
       - name: Full mutation run with baseline update
-        # `--in-place` rewrites the cached baseline.jsonl so that
-        # subsequent scheduled runs compare against the new state.
-        # We capture stdout/stderr in `mutants.log` and upload as a
-        # build artifact so reviewers can browse per-run kill rates.
         run: |
           set -o pipefail
-          "$RUNNER_TEMP/bin/cargo" mutants \
+          cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
             --rebaseline \
