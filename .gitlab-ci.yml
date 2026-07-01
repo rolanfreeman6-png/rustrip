@@ -367,7 +367,7 @@ mutants:check:mr:
   before_script:
     - cargo install --locked cargo-mutants
   script:
-    - timeout 480 cargo mutants --in-place --no-shuffle --timeout 60 --check || echo "::warning::mutants-check-not-clean"
+    - timeout 480 cargo mutants --in-place --no-shuffle --timeout 60 || echo "::warning::mutants-not-clean"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   allow_failure: true
@@ -383,7 +383,7 @@ mutants:full:push:
   before_script:
     - cargo install --locked cargo-mutants
   script:
-    - timeout 3600 cargo mutants --in-place --no-shuffle --timeout 60 --rebaseline || exit $?
+    - timeout 3600 cargo mutants --in-place --no-shuffle --timeout 60 || exit $?
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
@@ -392,7 +392,7 @@ mutants:full:push:
     when: always
     paths:
       - mutants.log
-      - mutants.jsonl
+      - .cargo-mutants/baseline.jsonl
     expire_in: 30 days
 
 mutants:manual:

@@ -34,12 +34,14 @@ jobs:
         # sees an empty PATH and 127s.
         run: cargo install --locked cargo-mutants
       - name: Mutation smoke (PR / 8 minute budget)
+        # cargo-mutants 27.x: `--in-place` runs full mutations.
+        # Baseline is written to .cargo-mutants/baseline.jsonl on each
+        # successful run, so the next run sees a stable comparison.
         run: |
           timeout 480 cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
-            --check \
-            mutants/ || echo "mutation-smoke-timed-out"
+            || echo "mutation-smoke-timed-out"
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
@@ -62,16 +64,26 @@ jobs:
       - name: Install cargo-mutants
         run: cargo install --locked cargo-mutants
       - name: Full mutation run with baseline update
+        # `--in-place` writes .cargo-mutants/baseline.jsonl so the next
+        # scheduled run sees a stable starting point. We pipe through
+        # `tee` so the build artifact contains both stdout and stderr.
         run: |
           set -o pipefail
           cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
-            --rebaseline \
             2>&1 | tee mutants.log
           status=${PIPESTATUS[0]}
           echo "mutants exit code: $status"
           exit $status
+      - name: Upload baseline.jsonl
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-baseline-${{ github.run_id }}
+          path: .cargo-mutants/baseline.jsonl
+          retention-days: 30
+          if-no-files-found: ignore
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
