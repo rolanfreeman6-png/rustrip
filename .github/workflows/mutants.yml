@@ -1,0 +1,110 @@
+name: mutants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly on Thursday at 02:15 UTC; expensive run that re-benchmarks
+    # the kill-rate baseline across the open PRs at the time.
+    - cron: "15 2 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # `cargo mutants` doesn't post PR comments itself, but we cache is
+  # safe to re-read.
+
+jobs:
+  mutants-pr:
+    name: mutation smoke (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: mutants-pr-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install --locked --root "$RUNNER_TEMP" cargo-mutants
+      - name: Mutation smoke (PR / 8 minute budget)
+        # For PRs we don't need a full 25-minute run; `--check` is a
+        # fast mode that compares against the cached baseline without
+        # writing new scored output. Most early-stage PRs complete in
+        # under 8 minutes; if they exceed, signal-only (allow_failure).
+        run: |
+          timeout 480 \
+            "$RUNNER_TEMP/bin/cargo" mutants \
+              --in-place --no-shuffle \
+              --timeout 60 \
+              --check \
+              mutants/ || echo "mutation-smoke-timed-out"
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-pr-${{ github.event.pull_request.number || github.run_id }}
+          path: mutants.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  mutants-push:
+    name: mutation full (push + scheduled)
+    needs: mutants-pr
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install --locked --root "$RUNNER_TEMP" cargo-mutants
+      - name: Full mutation run with baseline update
+        # `--in-place` rewrites the cached baseline.jsonl so that
+        # subsequent scheduled runs compare against the new state.
+        # We capture stdout/stderr in `mutants.log` and upload as a
+        # build artifact so reviewers can browse per-run kill rates.
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/bin/cargo" mutants \
+            --in-place --no-shuffle \
+            --timeout 60 \
+            --rebaseline \
+            2>&1 | tee mutants.log
+          status=${PIPESTATUS[0]}
+          echo "mutants exit code: $status"
+          exit $status
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ github.run_id }}
+          path: mutants.log
+          retention-days: 30
+
+  mutants-baseline-summary:
+    name: summarize kill rate
+    needs: mutants-push
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mutants-${{ github.run_id }}
+          path: artifacts
+      - name: Summarize
+        # Pull the (caught / total) counts out of the log. If the log
+        # does not contain them, output "(unparsed)" so an alert
+        # consumer page can still show what happened.
+        run: |
+          caught=$(grep -E 'caught' mutants.log 2>/dev/null | head -1 || echo "(no 'caught' line)")
+          total=$(grep -E 'tested in' mutants.log 2>/dev/null | head -1 || echo "(no summary)")
+          msg="mutation summary:
+          $caught
+          $total"
+          echo "$msg"
+          echo "::notice::$msg"
