@@ -6,7 +6,11 @@ Cargo.lock.bak
 .idea/
 .vscode/
 # cargo-mutants logs (regenerated on every run).
+mutants.out/
+mutants.out.old/
 mutations.log/
 mutations2.log/
 mutations.jsonl
+# cargo-mutants baseline cache (rewritten per-run on `--in-place`).
+.cargo-mutants/
 

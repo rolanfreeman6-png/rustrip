@@ -209,3 +209,137 @@ fn cli_max_string_len_zero_rejects_or_filters() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// File-output path: exercises the `Some(p)` branch in `main.rs` that
+// opens a `std::fs::File` for the rendered backend. cargo-mutants
+// mutations in that control flow (e.g. dropping the `Box::new(...)` or
+// the `with_context(...)` chain) get caught here.
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cli_output_file_writes_table_to_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out_path = dir.path().join("rustrip-table.txt");
+    let exe = rustrip_bin();
+    let out = Command::new(&exe)
+        .arg(&exe)
+        .arg("-f")
+        .arg("table")
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .expect("run rustrip -o table");
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let on_disk = std::fs::read_to_string(&out_path).expect("read output");
+    assert!(on_disk.contains("vaddr"), "no vaddr header on disk: {on_disk:?}");
+    assert!(
+        on_disk.contains("panic") || on_disk.contains("string") || on_disk.contains("symbol"),
+        "no annotation on disk: {on_disk:?}"
+    );
+}
+
+#[test]
+fn cli_output_file_writes_json_to_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out_path = dir.path().join("rustrip-report.json");
+    let exe = rustrip_bin();
+    let out = Command::new(&exe)
+        .arg(&exe)
+        .arg("-f")
+        .arg("json")
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .expect("run rustrip -o json");
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let on_disk = std::fs::read_to_string(&out_path).expect("read json");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&on_disk).expect("json parses");
+    let arr = parsed.as_array().expect("top-level is array");
+    assert!(!arr.is_empty(), "json had no annotations");
+}
+
+#[test]
+fn cli_output_file_writes_ghidra_python_to_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out_path = dir.path().join("rustrip-report_ghidra.py");
+    let exe = rustrip_bin();
+    let out = Command::new(&exe)
+        .arg(&exe)
+        .arg("-f")
+        .arg("ghidra")
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .expect("run rustrip -o ghidra");
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let on_disk = std::fs::read_to_string(&out_path).expect("read ghidra py");
+    assert!(on_disk.contains("currentProgram"));
+    assert!(on_disk.contains("_comments"));
+}
+
+#[test]
+fn cli_output_file_writes_binja_python_to_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out_path = dir.path().join("rustrip-report_binja.py");
+    let exe = rustrip_bin();
+    let out = Command::new(&exe)
+        .arg(&exe)
+        .arg("-f")
+        .arg("binja")
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .expect("run rustrip -o binja");
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let on_disk = std::fs::read_to_string(&out_path).expect("read binja py");
+    assert!(on_disk.contains("binaryninja"));
+    assert!(on_disk.contains("_labels"));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Tiny-binary guard. `read_bytes` returns `Err` when the file is less
+// than 4 bytes — covers cargo-mutants deletions of the `anyhow::bail!`
+// arm + the surrounding `if buf.len() < 4`.
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cli_tiny_binary_bails_with_friendly_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tiny = dir.path().join("tiny.bin");
+    std::fs::write(&tiny, [0u8, 0, 0]).expect("write tiny");
+    let exe = rustrip_bin();
+    let out = Command::new(&exe)
+        .arg(&tiny)
+        .arg("-f")
+        .arg("text")
+        .output()
+        .expect("run rustrip tiny");
+    assert!(
+        !out.status.success(),
+        "tiny input should fail; stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+    assert!(
+        stderr.contains("too small") || stderr.contains("small"),
+        "stderr should mention 'too small': {stderr:?}"
+    );
+}
