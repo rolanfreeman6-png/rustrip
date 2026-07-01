@@ -1,7 +1,6 @@
 # rustrip
 
-[![CI](https://github.com/rustrip/rustrip/actions/workflows/ci.yml/badge.svg)](https://github.com/rustrip/rustrip/actions/workflows/ci.yml)
-[![Pipeline](https://gitlab.com/rustrip/rustrip/badges/main/pipeline.svg)](https://gitlab.com/rustrip/rustrip/-/pipelines)
+[![CI](https://github.com/rolanfreeman6-png/rustrip/actions/workflows/ci.yml/badge.svg)](https://github.com/rolanfreeman6-png/rustrip/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/rustrip.svg)](https://crates.io/crates/rustrip)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
@@ -47,11 +46,8 @@ vaddr              kind     label
 
 ¹ gnu, musl, aarch64-gnu. ² msvc, gnu. ³ x86_64, aarch64.
 
-GitLab pipeline has 29 jobs across 7 stages; GitHub Actions has the
-equivalent readiness matrix. CI matrix is duplicated intentionally so
-that the canonical readiness gate is GitHub, where the orange bar is
-visible to anyone scanning the repo, and the heavier Linux/Windows/macOS
-matrix runs on GitLab where shared runner resources are abundant.
+CI runs on GitHub Actions across Linux, Windows, and macOS. The
+workflow matrix covers fmt, clippy, build, test, and cargo-audit.
 
 ## Install
 

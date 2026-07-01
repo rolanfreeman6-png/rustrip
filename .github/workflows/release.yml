@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: rustrip-linux-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: rustrip-linux-x86_64-musl
+            extra: musl-tools
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: rustrip-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: rustrip-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: rustrip-macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl tools
+        if: matrix.extra == 'musl-tools'
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends musl-tools
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/rustrip.exe" "${{ matrix.artifact }}"
+            certutil -hashfile "${{ matrix.artifact }}" SHA256 | sed -n 2p | tr -d ' ' > "${{ matrix.artifact }}.sha256"
+          else
+            cp "target/${{ matrix.target }}/release/rustrip" "${{ matrix.artifact }}"
+            sha256sum "${{ matrix.artifact }}" | awk '{print $1}' > "${{ matrix.artifact }}.sha256"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+
+  publish:
+    name: publish dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --dry-run --locked
+
+  release:
+    name: GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/rustrip-*/rustrip-*

@@ -1,7 +1,7 @@
 # Contributing to rustrip
 
 Thanks for taking an interest. The project lives at
-<https://github.com/rustrip/rustrip> (mirror at GitLab).
+<https://github.com/rolanfreeman6-png/rustrip>.
 
 ## Workflow
 
@@ -20,8 +20,7 @@ Thanks for taking an interest. The project lives at
    …all pass locally.
 5. Squash-fixup before opening a pull request if you have many "wip:"
    commits.
-6. Open a PR against `main`. The CI matrix mirrors GitLab CI; CI must
-   pass before a maintainer reviews.
+6. Open a PR against `main`. CI must pass before a maintainer reviews.
 
 ## Coding conventions
 

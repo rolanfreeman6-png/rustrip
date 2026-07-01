@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Byte-exact snapshot tests** for all four output backends (table,
+  JSON, Ghidra Python, Binary Ninja Python). Each test builds a
+  reference script using the same helper functions and format templates
+  as production, then asserts `actual == reference`. Any cargo-mutants
+  mutation that swaps a literal, changes a separator, or reorders a
+  `writeln!` line desyncs actual vs. expected and is caught.
+- **CLI coverage** for file-output (`-o`), gate-invertibility
+  (`--no-X` flags), tiny-file boundary (`<` vs `<=` on 4-byte input),
+  and `--max-string-len` propagation to `Limits`.
+
+### Changed
+
+- **GitLab CI removed.** `.gitlab-ci.yml` deleted; `gitlab` remote
+  removed. GitHub Actions is now the sole CI provider.
+- **GitHub Actions CI expanded.** `ci.yml` now includes clippy
+  (`-D warnings`), `cargo-audit`, and a cross-platform build + test
+  matrix (Linux, Windows, macOS). New `release.yml` workflow handles
+  tag-triggered release artifacts across 5 targets.
+- **`mutants.out/` untracked** from git. Added to `.gitignore` along
+  with `mutants.out.old/` and `.cargo-mutants/`.
+
+### Verified
+
+- 126 tests pass (58 unit + 17 CLI + 10 integration + 7 metamorphic +
+  34 property). Clippy clean (`-D warnings` + pedantic + nursery).
+  `cargo audit` clean (49 dependencies, 0 advisories). Semgrep clean.
+- cargo-mutants shard runs confirm 0 missed mutants in the four target
+  files (`src/output/table.rs`, `src/output/ghidra.rs`,
+  `src/output/binja.rs`, `src/main.rs`).
+
 ### Planned
 
 - `iced-x86`-based instruction-aware slice recovery (v0.2).
@@ -41,14 +73,10 @@ Initial release.
   - Binary Ninja Python script — `define_user_symbol` for labels,
     `set_comment_at` for comments.
 - **CI/CD.**
-  - GitLab (`.gitlab-ci.yml`, 29 jobs across 7 stages): lint, security
-    (cargo-audit, cargo-deny), build matrix (linux × gnu/musl/aarch64,
-    windows × msvc/gnu, macos × x86_64/aarch64), test matrix incl.
-    end-to-end on a stripped fixture, coverage (cargo-llvm-cov),
-    fuzz-smoke (cargo-fuzz + nightly), and release artifacts on tag.
-  - GitHub Actions (`.github/workflows/ci.yml`): `cargo fmt --check`,
-    `cargo build`, `cargo test`, `cargo clippy -D warnings`,
-    `cargo publish --dry-run` on main.
+  - GitHub Actions (`.github/workflows/`): `cargo fmt --check`,
+    `cargo clippy -D warnings`, cross-platform build + test matrix
+    (Linux, Windows, macOS), `cargo audit`, CodeQL SAST, semgrep SAST,
+    cargo-mutants, and tag-triggered release artifacts.
 - **Tests.** 31 tests pass — 21 unit, 10 integration. Adversarial
   regression script (`scripts/adversarial_test.sh`) feeds empty,
   random, and garbage inputs through rustrip and asserts no panic.
@@ -67,5 +95,5 @@ Initial release.
 - Generated JSON validates with `json.load()`.
 - 31/31 unit + integration tests pass on stable.
 
-[Unreleased]: https://github.com/rustrip/rustrip/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/rustrip/rustrip/releases/tag/v0.1.0
+[Unreleased]: https://github.com/rolanfreeman6-png/rustrip/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/rolanfreeman6-png/rustrip/releases/tag/v0.1.0

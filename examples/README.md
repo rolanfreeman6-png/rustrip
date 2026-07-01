@@ -100,14 +100,13 @@ OK — N cases passed, no panics observed
 ```
 
 This script ships as part of the repo and is wired into the CI matrix
-(`.gitlab-ci.yml:test:property:adversarial`).
+(`.github/workflows/ci.yml`).
 
 ## Repository contents
 
 ```
 .
-├── .github/workflows/ci.yml   # GitHub Actions CI
-├── .gitlab-ci.yml             # GitLab CI (29 jobs across 7 stages)
+├── .github/workflows/        # GitHub Actions CI (ci, release, codeql, mutants, semgrep)
 ├── Cargo.toml
 ├── README.md
 ├── CHANGELOG.md
