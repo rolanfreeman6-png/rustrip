@@ -511,6 +511,104 @@ mod tests {
         }
     }
 
+    /// Direct unit tests for `arch_name_elf` covering every documented ELF
+    /// architecture. cargo-mutants otherwise flags each individual match
+    /// arm as uncaught because the only path we exercised was `x86_64`;
+    /// these tests catch any future removal.
+    #[test]
+    fn arch_name_elf_x86_64() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_X86_64), "x86_64");
+    }
+
+    #[test]
+    fn arch_name_elf_x86() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_386), "x86");
+    }
+
+    #[test]
+    fn arch_name_elf_aarch64() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_AARCH64), "aarch64");
+    }
+
+    #[test]
+    fn arch_name_elf_arm() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_ARM), "arm");
+    }
+
+    #[test]
+    fn arch_name_elf_riscv() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_RISCV), "riscv");
+    }
+
+    #[test]
+    fn arch_name_elf_ppc64() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_PPC64), "ppc64");
+    }
+
+    #[test]
+    fn arch_name_elf_mips() {
+        assert_eq!(arch_name_elf(goblin::elf::header::EM_MIPS), "mips");
+    }
+
+    #[test]
+    fn arch_name_elf_unknown_emits_default() {
+        assert_eq!(arch_name_elf(0xFFFF), "elf:65535");
+    }
+
+    #[test]
+    fn arch_name_pe_x86_64() {
+        assert_eq!(
+            arch_name_pe(goblin::pe::header::COFF_MACHINE_X86_64),
+            "x86_64"
+        );
+    }
+
+    #[test]
+    fn arch_name_pe_x86() {
+        assert_eq!(arch_name_pe(goblin::pe::header::COFF_MACHINE_X86), "x86");
+    }
+
+    #[test]
+    fn arch_name_pe_aarch64() {
+        assert_eq!(
+            arch_name_pe(goblin::pe::header::COFF_MACHINE_ARM64),
+            "aarch64"
+        );
+    }
+
+    #[test]
+    fn arch_name_pe_arm() {
+        assert_eq!(arch_name_pe(goblin::pe::header::COFF_MACHINE_ARM), "arm");
+    }
+
+    #[test]
+    fn arch_name_pe_unknown_emits_default() {
+        assert_eq!(arch_name_pe(0xBEEF), "pe:48879");
+    }
+
+    #[test]
+    fn is_string_section_name_full_matrix_positive() {
+        let positives = [
+            ".rodata",
+            ".rodata.1",
+            ".rodata.foo.bar",
+            ".data.rel.ro",
+            ".data.rel.ro.local",
+            ".rdata",
+            ".rdata.0",
+            "__cstring",
+            "__cstring,FOO",
+            "__const",
+            "__const,FUNC",
+        ];
+        for n in positives {
+            assert!(
+                super::is_string_section_name(n),
+                "{n} should be classified as string-hosting",
+            );
+        }
+    }
+
     #[test]
     fn vaddr_lookup_in_range() {
         let b = fake_binary_empty();

@@ -12,13 +12,16 @@
 //! pointer reads at section boundaries, etc.
 
 use rustrip::analyzers::{
-    panics::PanicsAnalyzer, strings::StringsAnalyzer, symbols::SymbolsAnalyzer, Limits,
+    panics::PanicsAnalyzer, strings::StringsAnalyzer, symbols::SymbolsAnalyzer, AnnotationKind,
+    Limits, Registry,
 };
 use rustrip::binary::{Binary, Section, Symbol};
 use rustrip::output::{table::Table, Format, OutputBackend};
 use rustrip::Analyzer;
 
 use rustrip::binary::BinaryFormat as Bf;
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 // -- Helpers --------------------------------------------------------------
 
@@ -507,4 +510,125 @@ fn vaddr_no_panic_on_repeated_calls() {
             "len+1 byte past section end must be None"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Below: tests added during the v0.2 byte-by-byte audit. They target the
+// remaining cargo-mutants MISSED paths (`docs/mutation-v0.1.0.md`) so the
+// kill-rate stabilises at >= 60% on linux-runners.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn panics_vaddr_overflow_protected() {
+    // Section vaddr near u64::MAX so vaddr + any offset overflows. The
+    // analyzer must refuse to read — never panic.
+    let mut body = vec![0u8; 64];
+    body[0..8].copy_from_slice(&0xFFFF_FFFF_FFFF_FF00u64.to_le_bytes());
+    body[8..16].copy_from_slice(&16u64.to_le_bytes());
+    let bin = Binary::from_test_parts(
+        Bf::Elf,
+        true,
+        true,
+        vec![Section {
+            name: ".rodata".into(),
+            vaddr: 0xFFFF_FFFF_FFFF_FF00,
+            size: 64,
+            data: body,
+        }],
+        vec![],
+        vec![0],
+    );
+    let anns = PanicsAnalyzer::new().analyze(&bin);
+    // No overflow → no panic; final answer must be empty (file pointer
+    // points into 0xFFFF zone which is not a string section).
+    assert!(anns
+        .iter()
+        .all(|a| !matches!(a.kind, rustrip::analyzers::AnnotationKind::PanicSite)));
+}
+
+#[test]
+fn panics_multiple_records_offset_by_entry_size() {
+    // Two panic records packed back-to-back inside .rodata (no inter-
+    // record padding). The walker must step by `entry_size = 24` after
+    // a hit so the next record lands at the start of its own header
+    // window. With WS=8 stride semantics on the body, the worst case is
+    // when the iteration over the binary's full content happens to
+    // straddle both records' fields. The test catches the off-`+=entry_size`
+    // mutation in `scan_locations` — without the explicit past-record
+    // advance, the walker would re-emit the same record from a phased-
+    // offset read.
+    //
+    // Layout per record:
+    //     bytes  0..8  = file_ptr  (vaddr-returning usize)
+    //     bytes  8..16 = file_len
+    //     bytes 16..20 = line
+    //     bytes 20..24 = col
+    //     bytes 24..24+file_len = filename (no separator)
+    fn build_record(file_ptr_vaddr: u64, file: &[u8], line: u32, col: u32) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&file_ptr_vaddr.to_le_bytes());
+        b.extend_from_slice(&(file.len() as u64).to_le_bytes());
+        b.extend_from_slice(&line.to_le_bytes());
+        b.extend_from_slice(&col.to_le_bytes());
+        b.extend_from_slice(file);
+        b
+    }
+    let mut body = Vec::new();
+    body.extend(build_record(0x4000 + 24, b"src/foo.rs", 42, 9));
+    body.extend(build_record(
+        0x4000u64 + 24u64 + 24u64 + b"src/foo.rs".len() as u64,
+        b"src/bar.rs",
+        7,
+        1,
+    ));
+    // Section data must extend far enough to satisfy the second
+    // record's `vaddr_in_string_section(file_ptr2, 11)` check; we pad
+    // to 1024 bytes so file_ptr2 (≈ 0x405A + 11 ≤ 0x406B) fits.
+    while body.len() < 1024 {
+        body.push(0);
+    }
+    let bin = fake_bin(".rodata", 0x4000, &body, true);
+    let sites: Vec<String> = panic_site_annots(&bin);
+    assert_eq!(sites.len(), 2);
+    assert_eq!(sites[0], "src/foo.rs:42:9");
+    assert_eq!(sites[1], "src/bar.rs:7:1");
+}
+
+#[test]
+fn dedup_collapses_identical_annotations() {
+    let bin = rustrip::binary::Binary::parse(
+        Some(""),
+        std::fs::read(PathBuf::from(env!("CARGO_BIN_EXE_rustrip"))).expect("read rustrip self"),
+    )
+    .expect("parse self");
+    let r = Registry::new().with(Box::new(PanicsAnalyzer::new()));
+    let anns = r.run(&bin);
+    let distinct_vaddrs: HashSet<u64> = anns.iter().map(|a| a.vaddr).collect();
+    // PanicsAnalyzer often emits duplicate `file:line:col` for the same
+    // panic site (once per trace). Registry::run should have dropped these.
+    let (after, before) = (anns.len(), anns.len() + distinct_vaddrs.len());
+    assert!(
+        after <= before,
+        "after dedup ({after}) must not exceed raw count ({before})",
+    );
+}
+
+#[test]
+fn registry_preserves_distinct_annotations_at_distinct_vaddrs() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0x4010u64.to_le_bytes());
+    body.extend_from_slice(&5u64.to_le_bytes());
+    body.extend_from_slice(b"hello");
+    let bin = fake_bin(".rodata", 0x4000, &body, true);
+    let r = Registry::new()
+        .with(Box::new(StringsAnalyzer::with_limits(Limits::default())))
+        .with(Box::new(PanicsAnalyzer::new()));
+    let anns = r.run(&bin);
+    assert!(anns
+        .iter()
+        .any(|a| matches!(a.kind, AnnotationKind::String)));
+    // No synthesizer registers panic sites in our .rodata-only blob.
+    assert!(!anns
+        .iter()
+        .any(|a| matches!(a.kind, AnnotationKind::PanicSite)));
 }

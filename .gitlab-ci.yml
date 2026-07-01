@@ -367,8 +367,12 @@ mutants:check:mr:
   before_script:
     - cargo install --locked cargo-mutants
   script:
+    # GitLab runners don't run scripts under `set -e` by default but we
+    # keep the safety net: if cargo-mutants times out OR returns 3
+    # (missed mutants) we want the artifact preserved, not the job
+    # marked failed.
     - |
-      set -o pipefail
+      set +e
       timeout 480 cargo mutants --in-place --no-shuffle --timeout 60 2>&1 | tee mutants.log || true
       rc=${PIPESTATUS[0]}
       echo "MR mutation smoke exit: $rc (3 = some missed; expected — see artifact)"
@@ -389,10 +393,9 @@ mutants:full:push:
     - cargo install --locked cargo-mutants
   script:
     # cargo-mutants exits 3 when viable mutants miss; we record that
-    # signal in mutants.log but do not gate the pipeline on it. Killing
-    # exit code is captured in a separate log line.
+    # signal in mutants.log but do not gate the pipeline on it.
     - |
-      set -o pipefail
+      set +e
       cargo mutants --in-place --no-shuffle --timeout 60 2>&1 | tee mutants.log || true
       rc=${PIPESTATUS[0]}
       echo "cargo-mutants exit code: $rc"

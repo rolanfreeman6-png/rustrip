@@ -65,6 +65,19 @@ impl Analyzer for PanicsAnalyzer {
     }
 }
 
+// We pass `&mut Vec<Annotation>` instead of `&mut [Annotation]` because
+// we call `out.push(...)` inside the loop, which requires the owned
+// vector. clippy flags this as `ptr_arg` / `needless_pass_by_ref_mut`;
+// allow with rationale.
+//
+// `file_len as usize` truncations in the inner loop are tolerated
+// because `file_len` is bounded to `1..=4096` after the validation
+// step above — fitting comfortably in `usize` on any supported target.
+#[allow(
+    clippy::ptr_arg,
+    clippy::needless_pass_by_ref_mut,
+    clippy::cast_possible_truncation
+)]
 fn scan_locations<const WS: usize>(bin: &Binary, limits: &Limits, out: &mut Vec<Annotation>) {
     let entry_size = WS * 2 + 4 + 4;
     for sec in bin.sections() {
@@ -77,7 +90,13 @@ fn scan_locations<const WS: usize>(bin: &Binary, limits: &Limits, out: &mut Vec<
         }
         let mut off = 0usize;
         while off + entry_size <= data.len() {
-            let lookup = sec.vaddr + off as u64;
+            // Wraparound-protected vaddr arithmetic: a malicious binary
+            // could give a section vaddr + offset that overflows u64. Stop
+            // the walk in that case rather than wrap around and silently
+            // walk past the original intent.
+            let Some(lookup) = sec.vaddr.checked_add(off as u64) else {
+                break;
+            };
             let Some(file_ptr) = bin.read_ptr(lookup) else {
                 off += WS;
                 continue;
@@ -108,10 +127,9 @@ fn scan_locations<const WS: usize>(bin: &Binary, limits: &Limits, out: &mut Vec<
                 off += WS;
                 continue;
             }
-            // file_len has been bounded to `1..=4096` above; the `as usize`
-            // cast cannot truncate on a 64-bit host, and we are not built
-            // anywhere else.
-            #[allow(clippy::cast_possible_truncation)]
+            // file_len is bounded to `1..=4096` above — fits in usize
+            // on all supported targets. The fn-level `#[allow]`
+            // suppresses the warning here too.
             let Some(bytes) = bin.read_at_vaddr(file_ptr, file_len as usize) else {
                 off += WS;
                 continue;
@@ -134,9 +152,14 @@ fn scan_locations<const WS: usize>(bin: &Binary, limits: &Limits, out: &mut Vec<
                 label: format!("{file}:{line}:{col}"),
                 comment: None,
             });
-            // Skip past the entire record to avoid duplicate emits from
-            // overlapping half-step reads.
-            off += entry_size;
+            // Skip past the entire record (fixed-size header + variable
+            // filename slice). The next record starts at
+            //   `off + entry_size + file_len`
+            // and may sit at any byte boundary; the WS=8 walker catches
+            // it on the next iteration. `file_len` is bounded to
+            // `1..=4096` above so the `as usize` cannot truncate on a
+            // supported target.
+            off += entry_size + file_len as usize;
         }
     }
 }

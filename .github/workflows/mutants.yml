@@ -41,7 +41,8 @@ jobs:
         #   0 = every viable mutant caught
         #   3 = some viable mutants missed  (still useful signal!)
         # We deliberately exit 0 — mutations missed are tracked via the
-        # artifact, not used as a merge gate.
+        # artifact, not used as a merge gate. `|| true` swallows the
+        # build's `-e` shell that GH Actions sets, so we reach `exit 0`.
         run: |
           timeout 480 cargo mutants \
             --in-place --no-shuffle \
@@ -71,19 +72,21 @@ jobs:
         run: cargo install --locked cargo-mutants
       - name: Full mutation run with baseline update
         # `--in-place` writes .cargo-mutants/baseline.jsonl so the next
-        # scheduled run sees a stable starting point. We pipe through
-        # `tee` so the build artifact contains both stdout and stderr.
-        # The script intentionally exits 0 regardless of cargo-mutants'
-        # exit code: cargo-mutants exits non-zero when some viable
-        # mutants are uncaught, and uncaught mutants are the *signal* we
-        # want to record, not a CI gate. The kill rate is tracked off
-        # the uploaded mutants.log artifact.
+        # scheduled run sees a stable starting point.
+        #
+        # IMPORTANT: GH Actions runs the shell as `bash -e`. With pipefail
+        # set, the script would *immediately* abort on the first non-zero
+        # exit (cargo-mutants returning 3 because some mutants missed),
+        # BEFORE reaching the trailing `exit 0`. We explicitly swallow
+        # the failure on the cargo-mutants command line via `|| true`,
+        # and read the real exit code back from PIPESTATUS so we can
+        # surface it in the run log via `::notice::`.
         run: |
-          set -o pipefail
           cargo mutants \
             --in-place --no-shuffle \
             --timeout 60 \
-            2>&1 | tee mutants.log
+            2>&1 | tee mutants.log \
+            || true
           rc=${PIPESTATUS[0]}
           echo "::notice::cargo-mutants exit=$rc (0 = all caught, 3 = some missed — see artifact)"
           exit 0
