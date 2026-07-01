@@ -236,7 +236,10 @@ fn cli_output_file_writes_table_to_disk() {
         String::from_utf8_lossy(&out.stderr)
     );
     let on_disk = std::fs::read_to_string(&out_path).expect("read output");
-    assert!(on_disk.contains("vaddr"), "no vaddr header on disk: {on_disk:?}");
+    assert!(
+        on_disk.contains("vaddr"),
+        "no vaddr header on disk: {on_disk:?}"
+    );
     assert!(
         on_disk.contains("panic") || on_disk.contains("string") || on_disk.contains("symbol"),
         "no annotation on disk: {on_disk:?}"
@@ -262,8 +265,7 @@ fn cli_output_file_writes_json_to_disk() {
         String::from_utf8_lossy(&out.stderr)
     );
     let on_disk = std::fs::read_to_string(&out_path).expect("read json");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&on_disk).expect("json parses");
+    let parsed: serde_json::Value = serde_json::from_str(&on_disk).expect("json parses");
     let arr = parsed.as_array().expect("top-level is array");
     assert!(!arr.is_empty(), "json had no annotations");
 }
@@ -409,8 +411,7 @@ fn cli_selective_flag_toggles_invert_properly() {
             "flags {flags:?} failed: {:?}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let parsed: serde_json::Value =
-            serde_json::from_slice(&out.stdout).expect("json parses");
+        let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json parses");
         let arr = parsed.as_array().expect("array");
         arr.iter()
             .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
@@ -483,13 +484,11 @@ fn cli_max_string_len_propagates_to_limits() {
             "max={max} failed: {:?}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let parsed: serde_json::Value =
-            serde_json::from_slice(&out.stdout).expect("json parses");
+        let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json parses");
         let arr = parsed.as_array().expect("array");
-        arr.iter().filter(|v| {
-            v.get("kind").and_then(|k| k.as_str()) == Some("string")
-        })
-        .count()
+        arr.iter()
+            .filter(|v| v.get("kind").and_then(|k| k.as_str()) == Some("string"))
+            .count()
     };
 
     let big = count_for(4096);

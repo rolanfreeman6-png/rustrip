@@ -160,12 +160,7 @@ mod tests {
         }
         for a in anns {
             if let Some(c) = &a.comment {
-                let _ = writeln!(
-                    s,
-                    "_comments[0x{:x}] = {}",
-                    a.vaddr,
-                    py_str_with_escape(c)
-                );
+                let _ = writeln!(s, "_comments[0x{:x}] = {}", a.vaddr, py_str_with_escape(c));
             }
         }
         s.push('\n');

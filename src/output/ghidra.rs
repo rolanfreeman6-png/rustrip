@@ -231,12 +231,7 @@ mod tests {
             }
             let prefix = label_prefix(&a.kind);
             if prefix.is_empty() {
-                let _ = writeln!(
-                    s,
-                    "    (0x{:x}, {}, \"\"),",
-                    a.vaddr,
-                    py_str(&a.label)
-                );
+                let _ = writeln!(s, "    (0x{:x}, {}, \"\"),", a.vaddr, py_str(&a.label));
             } else {
                 let _ = writeln!(
                     s,

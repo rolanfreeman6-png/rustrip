@@ -293,13 +293,7 @@ mod tests {
             );
             if let Some(c) = &a.comment {
                 for line in textwrap(c, label_w) {
-                    let _ = writeln!(
-                        s,
-                        "  {:<kind_w$}  │ {}",
-                        "",
-                        line,
-                        kind_w = kind_w
-                    );
+                    let _ = writeln!(s, "  {:<kind_w$}  │ {}", "", line, kind_w = kind_w);
                 }
             }
         }
@@ -332,9 +326,7 @@ mod tests {
             vaddr: 0x0040_1000,
             kind: AnnotationKind::Symbol,
             label: "core::fmt::write".into(),
-            comment: Some(
-                "recovered &str slice at offset 0x401000, len=18, valid utf-8".into(),
-            ),
+            comment: Some("recovered &str slice at offset 0x401000, len=18, valid utf-8".into()),
         }];
         assert_eq!(render_string(&anns), render_reference(&anns));
     }
